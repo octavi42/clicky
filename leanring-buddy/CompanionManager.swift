@@ -28,6 +28,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var lastTranscript: String?
     @Published private(set) var currentAudioPowerLevel: CGFloat = 0
     @Published private(set) var hasAccessibilityPermission = false
+    @Published private(set) var hasInputMonitoringPermission = false
     @Published private(set) var hasScreenRecordingPermission = false
     @Published private(set) var hasMicrophonePermission = false
     @Published private(set) var hasScreenContentPermission = false
@@ -73,7 +74,12 @@ final class CompanionManager: ObservableObject {
     /// Base URL for the Cloudflare Worker proxy. All API requests route
     /// through this so keys never ship in the app binary.
     private static var workerBaseURL: String {
-        ClickyE2EConfiguration.workerBaseURL ?? "https://your-worker-name.your-subdomain.workers.dev"
+        ClickyE2EConfiguration.workerBaseURL ?? AppBundleConfiguration.workerBaseURL
+    }
+
+    /// True when the global CGEvent tap is active and can detect Control+Option.
+    var isPushToTalkHotkeyActive: Bool {
+        hasInputMonitoringPermission && globalPushToTalkShortcutMonitor.isEventTapInstalled
     }
 
     private let teachingSkillStore = TeachingSkillStore()
@@ -120,10 +126,13 @@ final class CompanionManager: ObservableObject {
     /// speaks again before the delay elapses.
     private var transientHideTask: Task<Void, Never>?
 
-    /// True when all three required permissions (accessibility, screen recording,
-    /// microphone) are granted. Used by the panel to show a single "all good" state.
+    /// True when all required permissions are granted. Used by the panel to show a single "all good" state.
     var allPermissionsGranted: Bool {
-        hasAccessibilityPermission && hasScreenRecordingPermission && hasMicrophonePermission && hasScreenContentPermission
+        hasAccessibilityPermission
+            && hasInputMonitoringPermission
+            && hasScreenRecordingPermission
+            && hasMicrophonePermission
+            && hasScreenContentPermission
     }
 
     /// Whether the blue cursor overlay is currently visible on screen.
@@ -192,13 +201,23 @@ final class CompanionManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
 
             if let firstTranscript = ClickyE2EConfiguration.injectTranscript {
+                print("🧪 E2E inject 1: \(firstTranscript)")
                 await injectTranscriptForE2E(firstTranscript)
 
                 if let secondTranscript = ClickyE2EConfiguration.injectTranscript2 {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    print("🧪 E2E inject 2: \(secondTranscript)")
                     await injectTranscriptForE2E(secondTranscript)
                 }
+
+                if let thirdTranscript = ClickyE2EConfiguration.injectTranscript3 {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    print("🧪 E2E inject 3: \(thirdTranscript)")
+                    await injectTranscriptForE2E(thirdTranscript)
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
             } else if let thirdTranscript = ClickyE2EConfiguration.injectTranscript3 {
+                print("🧪 E2E inject read-path: \(thirdTranscript)")
                 await injectTranscriptForE2E(thirdTranscript)
             }
         }
@@ -261,9 +280,10 @@ final class CompanionManager: ObservableObject {
     }
 
     private func matchedSkills(for transcript: String) -> [TeachingSkill] {
+        let bundleId = TeachingSkill.detectBundleId(in: transcript) ?? frontmostApplicationBundleId()
         let matches = SkillMatcher.matchSkills(
             from: teachingSkillStore.skills,
-            bundleId: frontmostApplicationBundleId(),
+            bundleId: bundleId,
             transcript: transcript
         )
         return matches.map(\.skill)
@@ -312,20 +332,25 @@ final class CompanionManager: ObservableObject {
         ClickyAnalytics.trackTeachingSkillWriteTriggered(reason: trigger.reason.rawValue, topic: trigger.topic)
 
         let traceSnapshot = sessionTrace
-        let bundleId = frontmostApplicationBundleId()
+        let targetBundleId = SkillTargetAppResolver.resolveTargetBundleId(
+            from: traceSnapshot,
+            frontmostBundleId: frontmostApplicationBundleId()
+        )
+        let primaryQuestion = SkillTriggerEvaluator.primaryTeachingQuestion(from: traceSnapshot) ?? trigger.topic
         skillWriteTask?.cancel()
         skillWriteTask = Task {
             do {
-                let existingSkill = SkillMatcher.findSimilarSkill(
+                let existingSkill = SkillMatcher.findSkillForUpdate(
                     in: teachingSkillStore.skills,
-                    bundleId: bundleId,
-                    topic: trigger.topic
+                    targetBundleId: targetBundleId,
+                    primaryQuestion: primaryQuestion
                 )
 
                 let synthesized = try await SkillSynthesizer.synthesizeSkillContent(
                     sessionTrace: traceSnapshot,
                     trigger: trigger,
                     existingSkill: existingSkill,
+                    targetBundleId: targetBundleId,
                     claudeAPI: claudeAPI
                 )
 
@@ -334,7 +359,7 @@ final class CompanionManager: ObservableObject {
                 let metadata = SkillSynthesizer.buildSkillMetadata(
                     sessionTrace: traceSnapshot,
                     trigger: trigger,
-                    bundleId: bundleId
+                    targetBundleId: targetBundleId
                 )
 
                 let skill = SkillSynthesizer.buildSkill(
@@ -342,7 +367,9 @@ final class CompanionManager: ObservableObject {
                     name: synthesized.name,
                     description: synthesized.description,
                     body: synthesized.body,
-                    bundleId: bundleId,
+                    targetBundleId: targetBundleId,
+                    taskSlug: metadata.taskSlug,
+                    primaryQuestion: primaryQuestion,
                     existingSkill: existingSkill
                 )
 
@@ -352,7 +379,7 @@ final class CompanionManager: ObservableObject {
                 runCuratorLLMPassesIfNeeded()
                 topicHistoryStore.recordTopic(
                     topic: trigger.topic,
-                    bundleId: bundleId,
+                    bundleId: targetBundleId,
                     skillId: skill.id
                 )
                 sessionTrace.removeAll()
@@ -435,7 +462,7 @@ final class CompanionManager: ObservableObject {
     func start() {
         bootstrapTeachingSkills()
         refreshAllPermissions()
-        print("🔑 Clicky start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
+        print("🔑 Clicky start — accessibility: \(hasAccessibilityPermission), inputMonitoring: \(hasInputMonitoringPermission), pushToTalkActive: \(isPushToTalkHotkeyActive), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
         bindVoiceStateObservation()
         bindAudioPowerLevel()
@@ -567,6 +594,7 @@ final class CompanionManager: ObservableObject {
 
     func refreshAllPermissions() {
         let previouslyHadAccessibility = hasAccessibilityPermission
+        let previouslyHadInputMonitoring = hasInputMonitoringPermission
         let previouslyHadScreenRecording = hasScreenRecordingPermission
         let previouslyHadMicrophone = hasMicrophonePermission
         let previouslyHadAll = allPermissionsGranted
@@ -574,7 +602,10 @@ final class CompanionManager: ObservableObject {
         let currentlyHasAccessibility = WindowPositionManager.hasAccessibilityPermission()
         hasAccessibilityPermission = currentlyHasAccessibility
 
-        if currentlyHasAccessibility {
+        let currentlyHasInputMonitoring = WindowPositionManager.hasInputMonitoringPermission()
+        hasInputMonitoringPermission = currentlyHasInputMonitoring
+
+        if currentlyHasInputMonitoring {
             globalPushToTalkShortcutMonitor.start()
         } else {
             globalPushToTalkShortcutMonitor.stop()
@@ -587,14 +618,18 @@ final class CompanionManager: ObservableObject {
 
         // Debug: log permission state on changes
         if previouslyHadAccessibility != hasAccessibilityPermission
+            || previouslyHadInputMonitoring != hasInputMonitoringPermission
             || previouslyHadScreenRecording != hasScreenRecordingPermission
             || previouslyHadMicrophone != hasMicrophonePermission {
-            print("🔑 Permissions — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission)")
+            print("🔑 Permissions — accessibility: \(hasAccessibilityPermission), inputMonitoring: \(hasInputMonitoringPermission), pushToTalkActive: \(isPushToTalkHotkeyActive), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission)")
         }
 
         // Track individual permission grants as they happen
         if !previouslyHadAccessibility && hasAccessibilityPermission {
             ClickyAnalytics.trackPermissionGranted(permission: "accessibility")
+        }
+        if !previouslyHadInputMonitoring && hasInputMonitoringPermission {
+            ClickyAnalytics.trackPermissionGranted(permission: "input_monitoring")
         }
         if !previouslyHadScreenRecording && hasScreenRecordingPermission {
             ClickyAnalytics.trackPermissionGranted(permission: "screen_recording")
@@ -998,14 +1033,17 @@ final class CompanionManager: ObservableObject {
                 // Play the response via TTS. Keep the spinner (processing state)
                 // until the audio actually starts playing, then switch to responding.
                 if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    do {
-                        try await elevenLabsTTSClient.speakText(spokenText)
-                        // speakText returns after player.play() — audio is now playing
-                        voiceState = .responding
-                    } catch {
-                        ClickyAnalytics.trackTTSError(error: error.localizedDescription)
-                        print("⚠️ ElevenLabs TTS error: \(error)")
-                        speakCreditsErrorFallback()
+                    if ClickyE2EConfiguration.isEnabled {
+                        voiceState = .idle
+                    } else {
+                        do {
+                            try await elevenLabsTTSClient.speakText(spokenText)
+                            voiceState = .responding
+                        } catch {
+                            ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+                            print("⚠️ ElevenLabs TTS error: \(error)")
+                            speakCreditsErrorFallback()
+                        }
                     }
                 }
             } catch is CancellationError {
