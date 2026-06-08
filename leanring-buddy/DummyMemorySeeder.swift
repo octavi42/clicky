@@ -14,6 +14,10 @@ enum DummyMemorySeeder {
         auxiliaryStore: AuxiliaryMemoryStore
     ) {
         #if DEBUG
+        // Skip seeding under E2E so dummy skills never pollute the store the
+        // automated harness asserts against.
+        guard !ClickyE2EConfiguration.isEnabled else { return }
+
         var seededCount = 0
 
         for dummySkill in makeDummySkills() where skillStore.skill(withID: dummySkill.id) == nil {
