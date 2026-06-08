@@ -78,7 +78,10 @@ class WindowPositionManager {
     // MARK: - Input Monitoring Permission
 
     /// Returns true if the app can install the global CGEvent tap used for push-to-talk.
-    static func hasInputMonitoringPermission() -> Bool {
+    /// `nonisolated` because it only reads the live TCC state via a pure C preflight call
+    /// (no main-actor state), so the nonisolated push-to-talk monitor can call it directly.
+    /// Without this, Xcode 16.4 rejects the call from `GlobalPushToTalkShortcutMonitor.start()`.
+    nonisolated static func hasInputMonitoringPermission() -> Bool {
         CGPreflightListenEventAccess()
     }
 
