@@ -224,11 +224,35 @@ enum SkillMatcher {
     }
 
     static func triggerPhraseMatchScore(for skill: TeachingSkill, in normalizedText: String) -> Int {
-        skill.triggers.reduce(0) { highestScore, triggerPhrase in
-            let normalizedTrigger = triggerPhrase.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard normalizedTrigger.count >= 3 else { return highestScore }
-            return normalizedText.contains(normalizedTrigger) ? max(highestScore, normalizedTrigger.count) : highestScore
+        let transcriptWords = wordSequence(from: normalizedText)
+        return skill.triggers.reduce(0) { highestScore, triggerPhrase in
+            let triggerWords = wordSequence(from: triggerPhrase.lowercased())
+            // Match on whole-word boundaries so a short trigger like "help"
+            // does not fire inside unrelated words such as "helpful".
+            let triggerCharacterCount = triggerWords.joined(separator: " ").count
+            guard triggerCharacterCount >= 3 else { return highestScore }
+            guard containsContiguousWords(triggerWords, in: transcriptWords) else { return highestScore }
+            return max(highestScore, triggerCharacterCount)
         }
+    }
+
+    /// Splits text into lowercased word tokens, preserving short words and order
+    /// so contiguous phrase matching works ("export the video" → matchable).
+    private static func wordSequence(from text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private static func containsContiguousWords(_ phraseWords: [String], in transcriptWords: [String]) -> Bool {
+        guard !phraseWords.isEmpty, phraseWords.count <= transcriptWords.count else { return false }
+        for startIndex in 0...(transcriptWords.count - phraseWords.count) {
+            if Array(transcriptWords[startIndex..<startIndex + phraseWords.count]) == phraseWords {
+                return true
+            }
+        }
+        return false
     }
 
     private static func recencyBoost(for skill: TeachingSkill, now: Date) -> Int {

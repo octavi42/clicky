@@ -594,8 +594,9 @@ final class CompanionManager: ObservableObject {
             // Claim the session synchronously so a confirmation turn's
             // finalizeAndPersistSession (which runs right after this call) does
             // not start a second, duplicate distill that cancels this proactive
-            // write and surfaces a spurious "failed" banner. Reset on genuine
-            // failure below so a later finalize-time pass can still retry.
+            // write and surfaces a spurious "failed" banner. On genuine failure
+            // below the claim is released so a still-open session can retry at
+            // finalize time (a session already finalized this turn cannot).
             didDraftSkillForCurrentSession = true
         }
 

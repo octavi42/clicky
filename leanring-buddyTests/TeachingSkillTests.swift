@@ -571,6 +571,27 @@ struct TeachingSkillTests {
         #expect(matches.first?.skill.id == "teach-textedit-save")
     }
 
+    @Test func triggerPhraseMatchesOnWordBoundariesNotSubstrings() {
+        let skill = TeachingSkill(
+            id: "teach-help",
+            name: "Open help",
+            description: "Open the help menu",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 0,
+            isPinned: false,
+            taskSlug: "help",
+            triggers: ["help"],
+            body: "open help"
+        )
+
+        // Whole-word match fires.
+        #expect(SkillMatcher.triggerPhraseMatchScore(for: skill, in: "can you help me") > 0)
+        // Substring inside an unrelated word ("helpful") must not fire.
+        #expect(SkillMatcher.triggerPhraseMatchScore(for: skill, in: "that was helpful") == 0)
+    }
+
     @Test func recencyAndTrustScoringPreferRecentlyConfirmedSkill() {
         let recentConfirmedSkill = TeachingSkill(
             id: "teach-textedit-save",
