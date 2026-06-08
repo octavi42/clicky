@@ -23,6 +23,10 @@ struct TeachingSkill: Identifiable, Equatable {
     var usageCount: Int
     var isPinned: Bool
     var taskSlug: String?
+    var triggers: [String] = []
+    var confirmedSuccessCount: Int = 0
+    var supersededAt: Date?
+    var previousBody: String?
     var body: String
 
     struct Metadata: Equatable {
@@ -65,23 +69,36 @@ struct TeachingSkill: Identifiable, Equatable {
         """
     }
 
+    private static let supersededBodyMarkerPrefix = "<!-- superseded:"
+
     func serialize() -> String {
         let lastUsedValue = lastUsed.map { TeachingSkill.dateFormatter.string(from: $0) } ?? ""
+        let supersededAtValue = supersededAt.map { TeachingSkill.dateFormatter.string(from: $0) } ?? ""
         let bundleLines = bundleIds.map { "  - \($0)" }.joined(separator: "\n")
+        let triggerLines = triggers.map { "  - \(TeachingSkill.yamlEscape($0))" }.joined(separator: "\n")
+        var serializedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let previousBody, let supersededAt {
+            let supersededMarker = "\(Self.supersededBodyMarkerPrefix)\(TeachingSkill.dateFormatter.string(from: supersededAt)) -->"
+            serializedBody += "\n\n\(supersededMarker)\n\n\(previousBody.trimmingCharacters(in: .whitespacesAndNewlines))"
+        }
         return """
         ---
         name: \(name)
         description: \(TeachingSkill.yamlEscape(description))
         bundleIds:
         \(bundleLines.isEmpty ? "  []" : bundleLines)
+        triggers:
+        \(triggerLines.isEmpty ? "  []" : triggerLines)
         status: \(status.rawValue)
         lastUsed: \(lastUsedValue)
         usageCount: \(usageCount)
+        confirmedSuccessCount: \(confirmedSuccessCount)
         pinned: \(isPinned)
         taskSlug: \(taskSlug ?? "")
+        supersededAt: \(supersededAtValue)
         ---
 
-        \(body.trimmingCharacters(in: .whitespacesAndNewlines))
+        \(serializedBody)
 
         """
     }
@@ -230,8 +247,9 @@ struct TeachingSkill: Identifiable, Equatable {
         guard components.count >= 3 else { return nil }
 
         let frontmatter = components[1]
-        let body = components.dropFirst(2).joined(separator: "---").trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawBody = components.dropFirst(2).joined(separator: "---").trimmingCharacters(in: .whitespacesAndNewlines)
         let metadata = parseFrontmatter(frontmatter)
+        let parsedBodyParts = splitBodyAndPreviousBody(rawBody)
 
         let name = metadata["name"] ?? id
         let description = metadata["description"] ?? ""
@@ -239,12 +257,19 @@ struct TeachingSkill: Identifiable, Equatable {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty } ?? []
+        let triggers = metadata["triggers"]?
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
         let status = TeachingSkillStatus(rawValue: metadata["status"] ?? "active") ?? .active
         let lastUsed = metadata["lastUsed"].flatMap { dateFormatter.date(from: $0) }
         let usageCount = Int(metadata["usageCount"] ?? "0") ?? 0
+        let confirmedSuccessCount = Int(metadata["confirmedSuccessCount"] ?? "0") ?? 0
         let isPinned = (metadata["pinned"] ?? "false").lowercased() == "true"
         let taskSlug = metadata["taskSlug"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTaskSlug = (taskSlug?.isEmpty == false) ? taskSlug : nil
+        let supersededAt = metadata["supersededAt"].flatMap { dateFormatter.date(from: $0) }
+            ?? parsedBodyParts.supersededAtFromMarker
 
         return TeachingSkill(
             id: id,
@@ -256,8 +281,45 @@ struct TeachingSkill: Identifiable, Equatable {
             usageCount: usageCount,
             isPinned: isPinned,
             taskSlug: resolvedTaskSlug,
-            body: body
+            triggers: triggers,
+            confirmedSuccessCount: confirmedSuccessCount,
+            supersededAt: supersededAt,
+            previousBody: parsedBodyParts.previousBody,
+            body: parsedBodyParts.body
         )
+    }
+
+    private static func splitBodyAndPreviousBody(_ rawBody: String) -> (body: String, previousBody: String?, supersededAtFromMarker: Date?) {
+        guard let markerRange = rawBody.range(of: supersededBodyMarkerPrefix) else {
+            return (body: rawBody, previousBody: nil, supersededAtFromMarker: nil)
+        }
+
+        let body = String(rawBody[..<markerRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let afterMarker = String(rawBody[markerRange.lowerBound...])
+        guard let markerEnd = afterMarker.range(of: "-->") else {
+            return (body: rawBody, previousBody: nil, supersededAtFromMarker: nil)
+        }
+
+        let markerContent = String(afterMarker[afterMarker.index(afterMarker.startIndex, offsetBy: supersededBodyMarkerPrefix.count)..<markerEnd.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let previousBodyStart = markerEnd.upperBound
+        let previousBody = String(afterMarker[previousBodyStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let supersededAtFromMarker = dateFormatter.date(from: markerContent)
+
+        return (
+            body: body,
+            previousBody: previousBody.isEmpty ? nil : previousBody,
+            supersededAtFromMarker: supersededAtFromMarker
+        )
+    }
+
+    /// Preserves the current body as `previousBody` before replacing it with new content.
+    func withSupersededBody(_ newBody: String, supersededAt: Date = Date()) -> TeachingSkill {
+        var updatedSkill = self
+        updatedSkill.previousBody = body
+        updatedSkill.supersededAt = supersededAt
+        updatedSkill.body = newBody
+        return updatedSkill
     }
 
     private static func parseFrontmatter(_ frontmatter: String) -> [String: String] {

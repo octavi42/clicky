@@ -85,6 +85,8 @@ final class CompanionManager: ObservableObject {
     private let topicHistoryStore = TeachingTopicHistoryStore()
     private let sessionStore = SessionStore()
     private var sessionTrace: [SessionTraceEntry] = []
+    /// Skill IDs injected into responses during the open session, credited on user confirmation.
+    private var appliedSkillIDsInCurrentSession: [String] = []
     private var sessionStartedAt: Date?
     private var sessionIdleTimer: Timer?
     /// True from push-to-talk press until the voice pipeline returns to idle.
@@ -401,7 +403,11 @@ final class CompanionManager: ObservableObject {
         // fire mid-speech on a long reply and split one conversation into two sessions.
         // It is armed when the response task returns to idle (after TTS) instead.
 
-        if !SkillTriggerEvaluator.isConfirmationTranscript(transcript) {
+        if SkillTriggerEvaluator.isConfirmationTranscript(transcript) {
+            try? teachingSkillStore.markConfirmedSuccess(forSkillIDs: appliedSkillIDsInCurrentSession)
+            appliedSkillIDsInCurrentSession.removeAll()
+            teachingSkills = teachingSkillStore.skills
+        } else {
             let topic = SkillTriggerEvaluator.deriveTopic(fromQuestion: transcript)
             topicHistoryStore.recordTopic(
                 topic: topic,
@@ -464,6 +470,7 @@ final class CompanionManager: ObservableObject {
             // Only discard the in-memory session once it is safely on disk.
             sessionStartedAt = nil
             sessionTrace.removeAll()
+            appliedSkillIDsInCurrentSession.removeAll()
             runMemoryGate(on: session)
         } catch {
             // Keep the trace and re-arm the idle timer so a transient I/O error
@@ -571,6 +578,7 @@ final class CompanionManager: ObservableObject {
                     name: synthesized.name,
                     description: synthesized.description,
                     body: synthesized.body,
+                    triggers: synthesized.triggers,
                     targetBundleId: targetBundleId,
                     taskSlug: metadata.taskSlug,
                     primaryQuestion: primaryQuestion,
@@ -1736,6 +1744,7 @@ final class CompanionManager: ObservableObject {
                     for skill in matchedTeachingSkills {
                         _ = try? teachingSkillStore.markUsed(skill)
                     }
+                    appliedSkillIDsInCurrentSession.append(contentsOf: matchedTeachingSkills.map(\.id))
                     syncTeachingSkillsFromStore()
 
                     if !matchedTeachingSkills.isEmpty {
@@ -1876,6 +1885,7 @@ final class CompanionManager: ObservableObject {
 
             if !Task.isCancelled {
                 voiceState = .idle
+                lastMatchedSkillNames = []
                 isPushToTalkInteractionActive = false
                 // Arm the idle boundary now that the assistant has finished speaking,
                 // so the 30s countdown measures genuine user inactivity rather than

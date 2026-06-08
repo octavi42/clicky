@@ -34,8 +34,10 @@ enum SkillMatcher {
         from skills: [TeachingSkill],
         bundleId: String?,
         transcript: String,
-        limit: Int = 3
+        limit: Int = 3,
+        now: Date = Date()
     ) -> [SkillMatch] {
+        let normalizedTranscript = transcript.lowercased()
         let queryTokens = tokenize(transcript)
         let eligibleSkills = skills.filter { skill in
             skill.status != .archived || skill.isPinned
@@ -46,6 +48,10 @@ enum SkillMatcher {
 
             if let bundleId, skill.bundleIds.contains(bundleId) {
                 score += 12
+            }
+
+            if triggerPhraseMatchScore(for: skill, in: normalizedTranscript) > 0 {
+                score += 20
             }
 
             let haystackTokens = Set(
@@ -59,6 +65,8 @@ enum SkillMatcher {
                 score += 1
             }
             score += min(skill.usageCount, 5)
+            score += min(skill.confirmedSuccessCount, 5)
+            score += recencyBoost(for: skill, now: now)
 
             return score > 0 ? SkillMatch(skill: skill, score: score) : nil
         }
@@ -115,6 +123,13 @@ enum SkillMatcher {
             }
         }
 
+        let normalizedQuestion = primaryQuestion.lowercased()
+        if let triggerMatchedSkill = skills.max(by: { lhs, rhs in
+            triggerPhraseMatchScore(for: lhs, in: normalizedQuestion) < triggerPhraseMatchScore(for: rhs, in: normalizedQuestion)
+        }), triggerPhraseMatchScore(for: triggerMatchedSkill, in: normalizedQuestion) > 0 {
+            return triggerMatchedSkill
+        }
+
         let topicTokens = Set(meaningfulTokens(primaryQuestion))
         guard !topicTokens.isEmpty else { return nil }
 
@@ -127,7 +142,7 @@ enum SkillMatcher {
             overlapScore(lhs, topicTokens: topicTokens) < overlapScore(rhs, topicTokens: topicTokens)
         }
         .flatMap { candidate in
-            overlapScore(candidate, topicTokens: topicTokens) >= 2 ? candidate : nil
+            overlapScore(candidate, topicTokens: topicTokens) >= 1 ? candidate : nil
         }
     }
 
@@ -206,6 +221,22 @@ enum SkillMatcher {
             tokenize(skill.body)
         )
         return topicTokens.filter { skillTokens.contains($0) }.count
+    }
+
+    static func triggerPhraseMatchScore(for skill: TeachingSkill, in normalizedText: String) -> Int {
+        skill.triggers.reduce(0) { highestScore, triggerPhrase in
+            let normalizedTrigger = triggerPhrase.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard normalizedTrigger.count >= 3 else { return highestScore }
+            return normalizedText.contains(normalizedTrigger) ? max(highestScore, normalizedTrigger.count) : highestScore
+        }
+    }
+
+    private static func recencyBoost(for skill: TeachingSkill, now: Date) -> Int {
+        guard let lastUsed = skill.lastUsed else { return 0 }
+        let daysSinceLastUse = Calendar.current.dateComponents([.day], from: lastUsed, to: now).day ?? Int.max
+        if daysSinceLastUse <= 7 { return 3 }
+        if daysSinceLastUse <= 30 { return 1 }
+        return 0
     }
 
     static func tokenize(_ text: String) -> [String] {

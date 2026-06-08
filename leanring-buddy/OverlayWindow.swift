@@ -341,6 +341,31 @@ struct BlueCursorView: View {
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: companionManager.voiceState)
 
+            // Learned-skill chip — visible while TTS plays when a teaching skill was applied
+            if buddyIsVisibleOnThisScreen
+                && companionManager.voiceState == .responding
+                && !companionManager.lastMatchedSkillNames.isEmpty {
+                Text("using what you learned")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(DS.Colors.surface1.opacity(0.92))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(DS.Colors.borderSubtle.opacity(0.6), lineWidth: 0.8)
+                            )
+                    )
+                    .fixedSize()
+                    .accessibilityIdentifier("clicky.overlay.learned-skill-chip")
+                    .opacity(cursorOpacity)
+                    .position(x: cursorPosition.x + 10, y: cursorPosition.y - 22)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                    .animation(.easeIn(duration: 0.2), value: companionManager.voiceState)
+            }
+
         }
         .frame(width: screenFrame.width, height: screenFrame.height)
         .ignoresSafeArea()

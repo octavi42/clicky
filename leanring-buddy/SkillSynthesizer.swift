@@ -13,7 +13,12 @@ enum SkillSynthesizer {
 
     given a tutoring session transcript, produce a markdown teaching skill body only. do not include yaml frontmatter.
 
-    include:
+    start your output with exactly one line in this format:
+    triggers: phrase one | phrase two | phrase three
+
+    include 3-5 natural trigger phrases a user might say when they need this skill again.
+
+    after the triggers line, include:
     - the app/workflow being taught
     - ordered steps
     - exact ui labels, menu paths, and shortcuts when known
@@ -29,6 +34,11 @@ enum SkillSynthesizer {
     you update an existing teaching skill for clicky, a screen-native voice tutor that points at ui elements.
 
     given the existing skill body and a new tutoring session, produce an updated markdown body only. do not include yaml frontmatter.
+
+    start your output with exactly one line in this format:
+    triggers: phrase one | phrase two | phrase three
+
+    include 3-5 natural trigger phrases a user might say when they need this skill again.
 
     patch-first rules:
     - preserve guidance that still works
@@ -46,7 +56,7 @@ enum SkillSynthesizer {
         existingSkill: TeachingSkill?,
         targetBundleId: String?,
         claudeAPI: ClaudeAPI
-    ) async throws -> (name: String, description: String, body: String) {
+    ) async throws -> (name: String, description: String, body: String, triggers: [String]) {
         let sessionSummary = renderSessionSummary(
             sessionTrace,
             trigger: trigger,
@@ -81,10 +91,18 @@ enum SkillSynthesizer {
             maxTokens: 1200
         )
 
-        let cleanedBody = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedResponse = parseTriggersLine(from: response.text)
         let name = existingSkill?.name ?? metadata.name
         let description = existingSkill?.description ?? metadata.description
-        return (name: name, description: description, body: cleanedBody)
+        let resolvedTriggers = parsedResponse.triggers.isEmpty
+            ? (existingSkill?.triggers ?? [])
+            : parsedResponse.triggers
+        return (
+            name: name,
+            description: description,
+            body: parsedResponse.body,
+            triggers: resolvedTriggers
+        )
     }
 
     static func buildSkillMetadata(
@@ -101,6 +119,7 @@ enum SkillSynthesizer {
         name: String,
         description: String,
         body: String,
+        triggers: [String],
         targetBundleId: String?,
         taskSlug: String?,
         primaryQuestion: String,
@@ -120,18 +139,78 @@ enum SkillSynthesizer {
             bundleIds = []
         }
 
-        return TeachingSkill(
-            id: resolvedID,
-            name: name,
-            description: description,
-            bundleIds: bundleIds,
-            status: .active,
-            lastUsed: Date(),
-            usageCount: existingSkill?.usageCount ?? 0,
-            isPinned: existingSkill?.isPinned ?? false,
-            taskSlug: resolvedTaskSlug,
-            body: body
-        )
+        let resolvedSkill: TeachingSkill
+        if let existingSkill {
+            resolvedSkill = existingSkill.withSupersededBody(body)
+        } else {
+            resolvedSkill = TeachingSkill(
+                id: resolvedID,
+                name: name,
+                description: description,
+                bundleIds: bundleIds,
+                status: .active,
+                lastUsed: Date(),
+                usageCount: 0,
+                isPinned: false,
+                taskSlug: resolvedTaskSlug,
+                triggers: triggers,
+                confirmedSuccessCount: 0,
+                supersededAt: nil,
+                previousBody: nil,
+                body: body
+            )
+        }
+
+        var updatedSkill = resolvedSkill
+        updatedSkill.name = name
+        updatedSkill.description = description
+        updatedSkill.bundleIds = bundleIds
+        updatedSkill.status = .active
+        updatedSkill.lastUsed = Date()
+        updatedSkill.usageCount = existingSkill?.usageCount ?? 0
+        updatedSkill.isPinned = existingSkill?.isPinned ?? false
+        updatedSkill.taskSlug = resolvedTaskSlug
+        updatedSkill.triggers = triggers.isEmpty ? (existingSkill?.triggers ?? []) : triggers
+        updatedSkill.confirmedSuccessCount = existingSkill?.confirmedSuccessCount ?? 0
+        return updatedSkill
+    }
+
+    static func parseTriggersLine(from responseText: String) -> (triggers: [String], body: String) {
+        let trimmedResponse = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstLineEnd = trimmedResponse.firstIndex(of: "\n") else {
+            return parseTriggersFromSingleLine(trimmedResponse)
+        }
+
+        let firstLine = String(trimmedResponse[..<firstLineEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let remainingBody = String(trimmedResponse[trimmedResponse.index(after: firstLineEnd)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard firstLine.lowercased().hasPrefix("triggers:") else {
+            return (triggers: [], body: trimmedResponse)
+        }
+
+        let triggerText = String(firstLine.dropFirst("triggers:".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let triggers = triggerText
+            .split(separator: "|")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return (triggers: triggers, body: remainingBody)
+    }
+
+    private static func parseTriggersFromSingleLine(_ line: String) -> (triggers: [String], body: String) {
+        guard line.lowercased().hasPrefix("triggers:") else {
+            return (triggers: [], body: line)
+        }
+
+        let triggerText = String(line.dropFirst("triggers:".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let triggers = triggerText
+            .split(separator: "|")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return (triggers: triggers, body: "")
     }
 
     private static func renderSessionSummary(
