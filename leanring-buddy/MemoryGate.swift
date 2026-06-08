@@ -19,6 +19,9 @@ enum GateReason: String, Codable, Equatable {
     case multiStepPointing
     case repeatedTopic
     case screenTeaching
+    case statedPreference
+    case styleCorrection
+    case recurringRoutine
 }
 
 enum BlockReason: String, Codable, Equatable {
@@ -40,6 +43,14 @@ struct MemoryGateDecision: Equatable {
 
     var shouldDistillSkill: Bool {
         passes(.skill)
+    }
+
+    var shouldDistillPreference: Bool {
+        passes(.preference)
+    }
+
+    var shouldDistillRoutine: Bool {
+        passes(.routine)
     }
 }
 
@@ -75,23 +86,46 @@ enum MemoryGate {
             return blockedDecision(sessionId: session.sessionId, reason: .empty)
         }
 
-        guard SkillTriggerEvaluator.isScreenTeachingSession(session.turns) else {
-            return blockedDecision(sessionId: session.sessionId, reason: .genericOffScreenQA)
+        var passedCategories: [MemoryCategory: [GateReason]] = [:]
+
+        if SkillTriggerEvaluator.isScreenTeachingSession(session.turns) {
+            let skillGateReasons = gateReasonsForSkillDistillation(
+                turns: session.turns,
+                topicHistory: topicHistory,
+                now: now
+            )
+            if !skillGateReasons.isEmpty {
+                passedCategories[.skill] = skillGateReasons
+            }
         }
 
-        let skillGateReasons = gateReasonsForSkillDistillation(
+        let preferenceGateReasons = gateReasonsForPreference(turns: session.turns)
+        if !preferenceGateReasons.isEmpty {
+            passedCategories[.preference] = preferenceGateReasons
+        }
+
+        let routineGateReasons = gateReasonsForRoutine(
             turns: session.turns,
             topicHistory: topicHistory,
             now: now
         )
+        if !routineGateReasons.isEmpty {
+            passedCategories[.routine] = routineGateReasons
+        }
 
-        guard !skillGateReasons.isEmpty else {
-            return blockedDecision(sessionId: session.sessionId, reason: .abandonedWithoutConfirmation)
+        guard !passedCategories.isEmpty else {
+            let blockReason: BlockReason
+            if SkillTriggerEvaluator.isScreenTeachingSession(session.turns) {
+                blockReason = .abandonedWithoutConfirmation
+            } else {
+                blockReason = .genericOffScreenQA
+            }
+            return blockedDecision(sessionId: session.sessionId, reason: blockReason)
         }
 
         return MemoryGateDecision(
             sessionId: session.sessionId,
-            passedCategories: [.skill: skillGateReasons],
+            passedCategories: passedCategories,
             blockReasons: []
         )
     }
@@ -150,6 +184,48 @@ enum MemoryGate {
         skillReasons.append(.screenTeaching)
 
         return skillReasons
+    }
+
+    static func gateReasonsForPreference(turns: [SessionTraceEntry]) -> [GateReason] {
+        var preferenceReasons: [GateReason] = []
+
+        if PreferenceSignalDetector.hasStatedPreference(in: turns) {
+            preferenceReasons.append(.statedPreference)
+        }
+
+        if PreferenceSignalDetector.hasStyleCorrectionAcrossTurns(in: turns) {
+            preferenceReasons.append(.styleCorrection)
+        }
+
+        return preferenceReasons
+    }
+
+    static func gateReasonsForRoutine(
+        turns: [SessionTraceEntry],
+        topicHistory: [TeachingTopicHistoryEntry],
+        now: Date = Date()
+    ) -> [GateReason] {
+        let hasMultiStepSequence = turns.filter(\.pointed).count >= 2 || turns.count >= 2
+        guard hasMultiStepSequence else { return [] }
+
+        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
+        let resolvedBundleId = SkillTargetAppResolver.resolveTargetBundleId(
+            from: turns,
+            frontmostBundleId: turns.last?.bundleId
+        )
+
+        let hasRecurringTopic = TeachingTopicHistoryStore.hasRecurringTopicAcrossDays(
+            topic: topic,
+            bundleId: resolvedBundleId,
+            minDistinctDays: 2,
+            withinDays: 7,
+            in: topicHistory,
+            now: now
+        )
+
+        guard hasRecurringTopic else { return [] }
+
+        return [.recurringRoutine]
     }
 
     static func makeSkillWriteTrigger(

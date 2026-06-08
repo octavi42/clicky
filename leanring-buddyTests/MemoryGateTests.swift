@@ -442,6 +442,259 @@ struct MemoryGateTests {
         #expect(decision.passedCategories[.skill]?.contains(.multiStepPointing) == true)
     }
 
+    @Test func passesPreferenceOnStatedPreferencePhrase() {
+        let session = makeSession(turns: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "from now on keep answers short",
+                assistantResponse: "got it, i'll keep things concise",
+                bundleId: nil,
+                pointed: false
+            )
+        ])
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: [],
+            isLearningEnabled: true
+        )
+
+        #expect(decision.shouldDistillPreference)
+        #expect(decision.passedCategories[.preference]?.contains(.statedPreference) == true)
+        #expect(!decision.shouldDistillSkill)
+        #expect(decision.blockReasons.isEmpty)
+    }
+
+    @Test func passesPreferenceEvenOnOffScreenQA() {
+        let session = makeSession(turns: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "i prefer keyboard shortcuts over menus",
+                assistantResponse: "noted",
+                bundleId: "com.apple.TextEdit",
+                pointed: false
+            )
+        ])
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: [],
+            isLearningEnabled: true
+        )
+
+        #expect(decision.shouldDistillPreference)
+        #expect(!decision.shouldDistillSkill)
+        #expect(decision.blockReasons.isEmpty)
+    }
+
+    @Test func passesRoutineOnRecurringMultiDayTopic() throws {
+        let calendar = Calendar.current
+        let now = Date()
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+        let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: now)!
+
+        let bundleId = "com.apple.dt.Xcode"
+        let topic = "standup prep"
+
+        let topicHistory: [TeachingTopicHistoryEntry] = [
+            TeachingTopicHistoryEntry(
+                topicTokens: SkillMatcher.meaningfulTokens(topic),
+                bundleId: bundleId,
+                timestamp: twoDaysAgo,
+                skillId: nil
+            ),
+            TeachingTopicHistoryEntry(
+                topicTokens: SkillMatcher.meaningfulTokens(topic),
+                bundleId: bundleId,
+                timestamp: yesterday,
+                skillId: nil
+            )
+        ]
+
+        let session = makeSession(
+            outcome: .unknown,
+            turns: [
+                SessionTraceEntry(
+                    timestamp: now,
+                    userTranscript: "help me with standup prep again",
+                    assistantResponse: "open source control and review commits",
+                    bundleId: bundleId,
+                    pointed: true
+                ),
+                SessionTraceEntry(
+                    timestamp: now,
+                    userTranscript: "show me yesterday's commits",
+                    assistantResponse: "pointing at the log",
+                    bundleId: bundleId,
+                    pointed: true
+                )
+            ]
+        )
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: topicHistory,
+            isLearningEnabled: true,
+            now: now
+        )
+
+        #expect(decision.shouldDistillRoutine)
+        #expect(decision.passedCategories[.routine]?.contains(.recurringRoutine) == true)
+    }
+
+    @Test func doesNotPassRoutineOnSingleDayRepeat() {
+        let now = Date()
+        let bundleId = "com.apple.dt.Xcode"
+        let topic = "standup prep"
+
+        let topicHistory: [TeachingTopicHistoryEntry] = [
+            TeachingTopicHistoryEntry(
+                topicTokens: SkillMatcher.meaningfulTokens(topic),
+                bundleId: bundleId,
+                timestamp: now.addingTimeInterval(-3600),
+                skillId: nil
+            ),
+            TeachingTopicHistoryEntry(
+                topicTokens: SkillMatcher.meaningfulTokens(topic),
+                bundleId: bundleId,
+                timestamp: now.addingTimeInterval(-1800),
+                skillId: nil
+            )
+        ]
+
+        let session = makeSession(
+            outcome: .unknown,
+            turns: [
+                SessionTraceEntry(
+                    timestamp: now,
+                    userTranscript: "help me with standup prep",
+                    assistantResponse: "open source control",
+                    bundleId: bundleId,
+                    pointed: true
+                ),
+                SessionTraceEntry(
+                    timestamp: now,
+                    userTranscript: "show commits",
+                    assistantResponse: "pointing at log",
+                    bundleId: bundleId,
+                    pointed: true
+                )
+            ]
+        )
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: topicHistory,
+            isLearningEnabled: true,
+            now: now
+        )
+
+        #expect(!decision.shouldDistillRoutine)
+    }
+
+    @Test func learningDisabledBlocksAllCategories() {
+        let session = makeSession(turns: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "from now on keep answers short",
+                assistantResponse: "got it",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            )
+        ])
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: [],
+            isLearningEnabled: false
+        )
+
+        #expect(!decision.shouldDistillPreference)
+        #expect(!decision.shouldDistillRoutine)
+        #expect(!decision.shouldDistillSkill)
+        #expect(decision.blockReasons == [.learningDisabled])
+    }
+
+    @Test func preferenceSignalDetectorFindsStatedPreference() {
+        #expect(PreferenceSignalDetector.hasStatedPreference(in: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "from now on keep answers short",
+                assistantResponse: "ok",
+                bundleId: nil,
+                pointed: false
+            )
+        ]))
+        #expect(!PreferenceSignalDetector.hasStatedPreference(in: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i save this?",
+                assistantResponse: "click file",
+                bundleId: nil,
+                pointed: true
+            )
+        ]))
+    }
+
+    @Test func hasRecurringTopicAcrossDaysRequiresDistinctCalendarDays() {
+        let calendar = Calendar.current
+        let now = Date()
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+        let earlierToday = now.addingTimeInterval(-3600)
+
+        let entries = [
+            TeachingTopicHistoryEntry(
+                topicTokens: ["standup", "prep"],
+                bundleId: "com.apple.dt.Xcode",
+                timestamp: earlierToday,
+                skillId: nil
+            ),
+            TeachingTopicHistoryEntry(
+                topicTokens: ["standup", "prep"],
+                bundleId: "com.apple.dt.Xcode",
+                timestamp: yesterday,
+                skillId: nil
+            )
+        ]
+
+        #expect(
+            TeachingTopicHistoryStore.hasRecurringTopicAcrossDays(
+                topic: "standup prep",
+                bundleId: "com.apple.dt.Xcode",
+                minDistinctDays: 2,
+                withinDays: 7,
+                in: entries,
+                now: now
+            )
+        )
+
+        let sameDayEntries = [
+            TeachingTopicHistoryEntry(
+                topicTokens: ["standup", "prep"],
+                bundleId: "com.apple.dt.Xcode",
+                timestamp: earlierToday,
+                skillId: nil
+            ),
+            TeachingTopicHistoryEntry(
+                topicTokens: ["standup", "prep"],
+                bundleId: "com.apple.dt.Xcode",
+                timestamp: now.addingTimeInterval(-1800),
+                skillId: nil
+            )
+        ]
+
+        #expect(
+            !TeachingTopicHistoryStore.hasRecurringTopicAcrossDays(
+                topic: "standup prep",
+                bundleId: "com.apple.dt.Xcode",
+                minDistinctDays: 2,
+                withinDays: 7,
+                in: sameDayEntries,
+                now: now
+            )
+        )
+    }
+
     @Test func makeSkillWriteTriggerUsesPrimaryGateReason() {
         let session = makeSession(turns: [
             SessionTraceEntry(

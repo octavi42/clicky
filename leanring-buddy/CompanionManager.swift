@@ -101,6 +101,8 @@ final class CompanionManager: ObservableObject {
     private var isPushToTalkInteractionActive = false
     private var panelClosedObserver: NSObjectProtocol?
     private var skillWriteTask: Task<Void, Never>?
+    private var preferenceWriteTask: Task<Void, Never>?
+    private var routineWriteTask: Task<Void, Never>?
     private var curatorLLMTask: Task<Void, Never>?
     /// Prevents proactive and finalize-time distill from writing the same session twice.
     private var didDraftSkillForCurrentSession = false
@@ -393,6 +395,24 @@ final class CompanionManager: ObservableObject {
         return matches.map(\.skill)
     }
 
+    private func activePreferences(bundleId: String?) -> [Memory] {
+        let activePreferences = auxiliaryMemoryStore.memories(for: .preference).filter { memory in
+            memory.status == .active &&
+            (memory.bundleIds.isEmpty || bundleId == nil || memory.bundleIds.contains(bundleId!))
+        }
+        return Array(activePreferences.prefix(3))
+    }
+
+    private func matchedRoutines(for transcript: String) -> [Memory] {
+        let bundleId = TeachingSkill.detectBundleId(in: transcript) ?? frontmostApplicationBundleId()
+        return AuxiliaryMemoryMatcher.matchRoutines(
+            from: auxiliaryMemoryStore.memories,
+            bundleId: bundleId,
+            transcript: transcript,
+            limit: 2
+        )
+    }
+
     private func recordSessionExchange(
         transcript: String,
         spokenResponse: String,
@@ -543,17 +563,28 @@ final class CompanionManager: ObservableObject {
         let skillGateReasons = decision.passedCategories[.skill] ?? []
         lastSkillWriteTrigger = skillGateReasons.first?.rawValue
 
+        let allGateReasons = decision.passedCategories.values.flatMap { $0 }.map(\.rawValue)
+
         ClickyAnalytics.trackMemoryGateDecision(
             sessionId: session.sessionId.uuidString,
             passedCategories: decision.passedCategories.keys.map(\.rawValue),
-            gateReasons: skillGateReasons.map(\.rawValue),
+            gateReasons: allGateReasons,
             blockReasons: decision.blockReasons.map(\.rawValue)
         )
 
-        guard decision.shouldDistillSkill else { return }
-        guard !didDraftSkillForCurrentSession else { return }
+        if decision.shouldDistillSkill, !didDraftSkillForCurrentSession {
+            distillSkill(from: session.turns, gateReasons: skillGateReasons)
+        }
 
-        distillSkill(from: session.turns, gateReasons: skillGateReasons)
+        if decision.shouldDistillPreference {
+            let preferenceGateReasons = decision.passedCategories[.preference] ?? []
+            distillPreference(from: session.turns, gateReasons: preferenceGateReasons)
+        }
+
+        if decision.shouldDistillRoutine {
+            let routineGateReasons = decision.passedCategories[.routine] ?? []
+            distillRoutine(from: session.turns, gateReasons: routineGateReasons)
+        }
     }
 
     private func maybeProactivelyDraftSkill() {
@@ -706,6 +737,119 @@ final class CompanionManager: ObservableObject {
                     skillSaveStatus = .failed
                     scheduleSkillSaveStatusClear()
                 }
+            }
+        }
+    }
+
+    private func distillPreference(
+        from turns: [SessionTraceEntry],
+        gateReasons: [GateReason]
+    ) {
+        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
+        let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: turns)
+        let targetBundleId = isAppSpecific
+            ? SkillTargetAppResolver.resolveTargetBundleId(
+                from: turns,
+                frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
+            )
+            : nil
+
+        preferenceWriteTask = Task {
+            do {
+                let existingMemory = AuxiliaryMemoryMatcher.findMemoryForUpdate(
+                    in: auxiliaryMemoryStore.memories,
+                    category: .preference,
+                    topic: topic,
+                    bundleId: targetBundleId
+                )
+
+                let memory = try await PreferenceSynthesizer.synthesizePreference(
+                    sessionTrace: turns,
+                    gateReasons: gateReasons,
+                    existingMemory: existingMemory,
+                    targetBundleId: targetBundleId,
+                    claudeAPI: claudeAPI
+                )
+
+                guard !Task.isCancelled else { return }
+
+                _ = try auxiliaryMemoryStore.save(memory)
+                syncTeachingSkillsFromStore()
+
+                ClickyAnalytics.trackMemorySaved(
+                    category: .preference,
+                    memoryID: memory.id,
+                    updatedExisting: existingMemory != nil
+                )
+
+                let toastMessage = existingMemory != nil
+                    ? "Updated a memory: \(memory.title)"
+                    : "Saved a new memory: \(memory.title)"
+                memorySavedToastManager.showTransientMessage(toastMessage, hideAfter: 6, onTap: { [weak self] in
+                    self?.memorySavedToastManager.hideOverlay()
+                    self?.requestOpenMemoriesLibrary(memoryID: memory.id)
+                })
+                writeE2EArtifactsIfNeeded()
+                print("📚 Saved preference memory: \(memory.id)")
+            } catch {
+                print("⚠️ Failed to synthesize preference memory: \(error)")
+            }
+        }
+    }
+
+    private func distillRoutine(
+        from turns: [SessionTraceEntry],
+        gateReasons: [GateReason]
+    ) {
+        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
+        let targetBundleId = SkillTargetAppResolver.resolveTargetBundleId(
+            from: turns,
+            frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
+        )
+
+        routineWriteTask = Task {
+            do {
+                let existingMemory = AuxiliaryMemoryMatcher.findMemoryForUpdate(
+                    in: auxiliaryMemoryStore.memories,
+                    category: .routine,
+                    topic: topic,
+                    bundleId: targetBundleId
+                )
+
+                let memory = try await RoutineSynthesizer.synthesizeRoutine(
+                    sessionTrace: turns,
+                    gateReasons: gateReasons,
+                    existingMemory: existingMemory,
+                    targetBundleId: targetBundleId,
+                    claudeAPI: claudeAPI
+                )
+
+                guard !Task.isCancelled else { return }
+
+                _ = try auxiliaryMemoryStore.save(memory)
+                syncTeachingSkillsFromStore()
+                topicHistoryStore.recordTopic(
+                    topic: topic,
+                    bundleId: targetBundleId
+                )
+
+                ClickyAnalytics.trackMemorySaved(
+                    category: .routine,
+                    memoryID: memory.id,
+                    updatedExisting: existingMemory != nil
+                )
+
+                let toastMessage = existingMemory != nil
+                    ? "Updated a memory: \(memory.title)"
+                    : "Saved a new memory: \(memory.title)"
+                memorySavedToastManager.showTransientMessage(toastMessage, hideAfter: 6, onTap: { [weak self] in
+                    self?.memorySavedToastManager.hideOverlay()
+                    self?.requestOpenMemoriesLibrary(memoryID: memory.id)
+                })
+                writeE2EArtifactsIfNeeded()
+                print("📚 Saved routine memory: \(memory.id)")
+            } catch {
+                print("⚠️ Failed to synthesize routine memory: \(error)")
             }
         }
     }
@@ -1204,6 +1348,10 @@ final class CompanionManager: ObservableObject {
     }
 
     func start() {
+        if ClickyE2EConfiguration.shouldSkipSetup {
+            hasSubmittedEmail = ClickyDefaults.shared.bool(forKey: "hasSubmittedEmail")
+        }
+
         bootstrapTeachingSkills()
         bindPanelClosedObservation()
         bootstrapNicheDiscovery()
@@ -1841,10 +1989,13 @@ final class CompanionManager: ObservableObject {
 
                     let matchedTeachingSkills = matchedSkills(for: transcript)
                     lastMatchedSkillNames = matchedTeachingSkills.map(\.name)
+                    let bundleId = TeachingSkill.detectBundleId(in: transcript) ?? frontmostApplicationBundleId()
                     let basePrompt = buildVoiceResponseSystemPrompt(suggestionTapContext: suggestionTapContext)
                     let systemPrompt = TeachingPromptBuilder.buildVoiceResponsePrompt(
                         basePrompt: basePrompt,
-                        matchedSkills: matchedTeachingSkills
+                        matchedSkills: matchedTeachingSkills,
+                        activePreferences: activePreferences(bundleId: bundleId),
+                        matchedRoutines: matchedRoutines(for: transcript)
                     )
                     lastSystemPrompt = systemPrompt
                     ClickyE2EConfiguration.writeLastSystemPromptForE2E(systemPrompt)
