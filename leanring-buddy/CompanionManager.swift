@@ -600,7 +600,12 @@ final class CompanionManager: ObservableObject {
             didDraftSkillForCurrentSession = true
         }
 
-        skillWriteTask?.cancel()
+        // Do NOT cancel a previously launched write here. Within one session
+        // didDraftSkillForCurrentSession already prevents a duplicate distill,
+        // and cancelling across sessions could abort an in-flight write from a
+        // prior (already-finalized) session before it persisted, dropping that
+        // session's skill entirely. Each write owns its own snapshot and runs
+        // to completion; main-actor isolation serializes the store writes.
         skillWriteTask = Task {
             do {
                 let existingSkill = SkillMatcher.findSkillForUpdate(
@@ -618,6 +623,19 @@ final class CompanionManager: ObservableObject {
                 )
 
                 guard !Task.isCancelled else { return }
+
+                // The user may have rejected the help on a turn that arrived
+                // while synthesis was in flight. Don't persist a skill they just
+                // thumbs-downed (only relevant for the still-open session this
+                // proactive write belongs to).
+                if isProactive,
+                   sessionStartedAt == draftSessionStartedAt,
+                   let latestTurn = sessionTrace.last,
+                   SkillTriggerEvaluator.isNegativeFeedbackTranscript(latestTurn.userTranscript) {
+                    didDraftSkillForCurrentSession = false
+                    if case .saving = skillSaveStatus { skillSaveStatus = .idle }
+                    return
+                }
 
                 let metadata = SkillSynthesizer.buildSkillMetadata(
                     sessionTrace: turns,
