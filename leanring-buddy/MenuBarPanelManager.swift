@@ -19,6 +19,7 @@ extension Notification.Name {
     static let clickyDismissPanel = Notification.Name("clickyDismissPanel")
     static let clickyCompanionPanelDidClose = Notification.Name("clickyCompanionPanelDidClose")
     static let clickyPanelLayoutDidChange = Notification.Name("clickyPanelLayoutDidChange")
+    static let clickyShowCompanionPanel = Notification.Name("clickyShowCompanionPanel")
 }
 
 /// Custom NSPanel subclass that can become the key window even with
@@ -33,6 +34,7 @@ final class MenuBarPanelManager: NSObject {
     private var panel: NSPanel?
     private var clickOutsideMonitor: Any?
     private var dismissPanelObserver: NSObjectProtocol?
+    private var showPanelObserver: NSObjectProtocol?
     private var panelLayoutObserver: NSObjectProtocol?
     private var panelLayoutUpdateWorkItem: DispatchWorkItem?
 
@@ -55,6 +57,14 @@ final class MenuBarPanelManager: NSObject {
             self?.hidePanel()
         }
 
+        showPanelObserver = NotificationCenter.default.addObserver(
+            forName: .clickyShowCompanionPanel,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.showPanel()
+        }
+
         panelLayoutObserver = NotificationCenter.default.addObserver(
             forName: .clickyPanelLayoutDidChange,
             object: nil,
@@ -69,6 +79,9 @@ final class MenuBarPanelManager: NSObject {
             NSEvent.removeMonitor(monitor)
         }
         if let observer = dismissPanelObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = showPanelObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = panelLayoutObserver {

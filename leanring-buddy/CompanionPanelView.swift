@@ -29,7 +29,8 @@ private enum CompanionPanelTab: String, CaseIterable, Identifiable {
 struct CompanionPanelView: View {
     @ObservedObject var companionManager: CompanionManager
     @State private var emailInput: String = ""
-    @State private var isShowingTeachingSkillsLibrary = false
+    @State private var isShowingMemoriesLibrary = false
+    @State private var initialSelectedMemoryID: String?
     @State private var showsNicheOverridePicker = false
     @State private var showsSuggestedAsks = false
     @State private var isShowingVaultConnectionSheet = false
@@ -40,17 +41,38 @@ struct CompanionPanelView: View {
     private static let selectedPanelTabUserDefaultsKey = "panelSelectedTab"
 
     var body: some View {
-        if isShowingVaultConnectionSheet {
-            vaultConnectionContent
-        } else if isShowingTeachingSkillsLibrary {
-            TeachingSkillsLibraryView(companionManager: companionManager) {
-                isShowingTeachingSkillsLibrary = false
+        Group {
+            if isShowingVaultConnectionSheet {
+                vaultConnectionContent
+            } else if isShowingMemoriesLibrary {
+                MemoriesLibraryView(
+                    companionManager: companionManager,
+                    initialSelectedMemoryID: initialSelectedMemoryID
+                ) {
+                    isShowingMemoriesLibrary = false
+                    initialSelectedMemoryID = nil
+                    companionManager.clearPendingMemoryLibraryOpen()
+                }
+                .frame(width: 320)
+                .background(panelBackground)
+            } else {
+                mainPanelContent
             }
-            .frame(width: 320)
-            .background(panelBackground)
-        } else {
-            mainPanelContent
         }
+        .onAppear {
+            handlePendingMemoryLibraryOpen()
+        }
+        .onChange(of: companionManager.pendingMemoryIDToOpenInLibrary) { _, _ in
+            handlePendingMemoryLibraryOpen()
+        }
+    }
+
+    private func handlePendingMemoryLibraryOpen() {
+        guard let memoryID = companionManager.pendingMemoryIDToOpenInLibrary else { return }
+        initialSelectedMemoryID = memoryID
+        isShowingMemoriesLibrary = true
+        selectPanelTab(.brain)
+        companionManager.clearPendingMemoryLibraryOpen()
     }
 
     private var vaultConnectionContent: some View {
@@ -290,8 +312,8 @@ struct CompanionPanelView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                brainTabSectionHeader(title: "Teaching Skills")
-                teachingSkillsSectionContent
+                brainTabSectionHeader(title: "Memories")
+                memoriesSection
             }
         }
     }
@@ -1040,16 +1062,30 @@ struct CompanionPanelView: View {
     }
 
 
-    // MARK: - Teaching Skills
+    // MARK: - Memories
 
-    private var teachingSkillsSectionContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Learn from sessions")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.Colors.textSecondary)
+    private var memoriesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .frame(width: 16)
 
-                Spacer()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Auto-save")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+
+                    Text(companionManager.isLearningFromSessionsEnabled
+                         ? "Clicky remembers what you teach it."
+                         : "Auto-save paused — existing memories stay.")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
 
                 Toggle("", isOn: Binding(
                     get: { companionManager.isLearningFromSessionsEnabled },
@@ -1059,75 +1095,77 @@ struct CompanionPanelView: View {
                 .labelsHidden()
                 .tint(DS.Colors.accent)
                 .scaleEffect(0.8)
-                .accessibilityIdentifier("clicky.panel.teaching-skills.learn-toggle")
+                .accessibilityIdentifier("clicky.panel.memories.learn-toggle")
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
 
-            Text(companionManager.isLearningFromSessionsEnabled
-                 ? "Clicky learns from successful tutoring sessions."
-                 : "Learning paused — saved skills still apply.")
-                .font(.system(size: 10))
-                .foregroundColor(DS.Colors.textTertiary)
+            Divider()
+                .background(DS.Colors.borderSubtle.opacity(0.6))
+                .padding(.horizontal, 12)
 
-            if companionManager.teachingSkills.isEmpty {
-                Text("No skills yet. Teach Clicky something on screen and confirm it worked.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                ForEach(companionManager.teachingSkills.prefix(4)) { skill in
-                    teachingSkillRow(skill)
+            Button(action: {
+                initialSelectedMemoryID = nil
+                isShowingMemoriesLibrary = true
+            }) {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("View saved memories")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(DS.Colors.textSecondary)
+
+                        Text(memoriesLibrarySubtitle)
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if !companionManager.memories.isEmpty {
+                        Text("\(companionManager.memories.count)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.textTertiary.opacity(0.8))
                 }
-
-                Button(action: {
-                    isShowingTeachingSkillsLibrary = true
-                }) {
-                    Text("View all")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.accent)
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .accessibilityIdentifier("clicky.panel.teaching-skills.view-all")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .accessibilityIdentifier("clicky.panel.memories.view-all")
         }
+        .background(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+        )
     }
 
-    private func teachingSkillRow(_ skill: TeachingSkill) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(skill.name)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(DS.Colors.textSecondary)
-                    .lineLimit(1)
-
-                Text("\(skill.usageCount) uses • \(skill.status.rawValue)")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
-            }
-
-            Spacer()
-
-            Button(action: {
-                companionManager.setTeachingSkillPinned(id: skill.id, pinned: !skill.isPinned)
-            }) {
-                Image(systemName: skill.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(skill.isPinned ? DS.Colors.accent : DS.Colors.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-
-            Button(action: {
-                companionManager.deleteTeachingSkill(id: skill.id)
-            }) {
-                Image(systemName: "trash")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.Colors.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
+    private var memoriesLibrarySubtitle: String {
+        let savedMemoryCount = companionManager.memories.count
+        switch savedMemoryCount {
+        case 0:
+            return "Nothing saved yet"
+        case 1:
+            return "1 memory saved"
+        default:
+            return "\(savedMemoryCount) memories saved"
         }
-        .padding(.vertical, 4)
     }
 
     // MARK: - Personal Vault
