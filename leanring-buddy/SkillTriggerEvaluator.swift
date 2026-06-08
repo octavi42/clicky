@@ -46,6 +46,16 @@ enum SkillTriggerEvaluator {
         "isnt", "wasnt", "wont", "wouldnt", "couldnt", "cant"
     ]
 
+    static func isNegativeFeedbackTranscript(_ transcript: String) -> Bool {
+        let normalized = transcript
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+
+        let transcriptWordSet = Set(words(from: normalized))
+        return !negationTokens.isDisjoint(with: transcriptWordSet)
+    }
+
     static func isConfirmationTranscript(_ transcript: String) -> Bool {
         let normalized = transcript
             .lowercased()

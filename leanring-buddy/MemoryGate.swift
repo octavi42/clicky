@@ -44,6 +44,19 @@ struct MemoryGateDecision: Equatable {
 }
 
 enum MemoryGate {
+    /// Hermes-style bar for proactive mid-session drafting: screen teaching with
+    /// real depth (2+ turns or 2+ pointing), and the user did not reject on the last turn.
+    static func meetsImplicitSaveBar(turns: [SessionTraceEntry]) -> Bool {
+        guard SkillTriggerEvaluator.isScreenTeachingSession(turns) else { return false }
+
+        if let lastTurn = turns.last,
+           SkillTriggerEvaluator.isNegativeFeedbackTranscript(lastTurn.userTranscript) {
+            return false
+        }
+
+        return turns.count >= 2 || turns.filter(\.pointed).count >= 2
+    }
+
     static func evaluate(
         session: PersistedSession,
         topicHistory: [TeachingTopicHistoryEntry],
@@ -66,18 +79,38 @@ enum MemoryGate {
             return blockedDecision(sessionId: session.sessionId, reason: .genericOffScreenQA)
         }
 
-        let hasConfirmationOnAnyTurn = session.turns.contains {
-            SkillTriggerEvaluator.isConfirmationTranscript($0.userTranscript)
-        }
+        let skillGateReasons = gateReasonsForSkillDistillation(
+            turns: session.turns,
+            topicHistory: topicHistory,
+            now: now
+        )
 
-        if session.outcome == .abandoned && !hasConfirmationOnAnyTurn {
+        guard !skillGateReasons.isEmpty else {
             return blockedDecision(sessionId: session.sessionId, reason: .abandonedWithoutConfirmation)
         }
 
-        let topic = SkillTriggerEvaluator.deriveTopic(from: session.turns)
+        return MemoryGateDecision(
+            sessionId: session.sessionId,
+            passedCategories: [.skill: skillGateReasons],
+            blockReasons: []
+        )
+    }
+
+    static func gateReasonsForSkillDistillation(
+        turns: [SessionTraceEntry],
+        topicHistory: [TeachingTopicHistoryEntry],
+        now: Date = Date()
+    ) -> [GateReason] {
+        let hasConfirmationOnAnyTurn = turns.contains {
+            SkillTriggerEvaluator.isConfirmationTranscript($0.userTranscript)
+        }
+        let hasMultiStepPointing = turns.filter(\.pointed).count >= 2
+        let meetsImplicitBar = meetsImplicitSaveBar(turns: turns)
+
+        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
         let resolvedBundleId = SkillTargetAppResolver.resolveTargetBundleId(
-            from: session.turns,
-            frontmostBundleId: session.turns.last?.bundleId
+            from: turns,
+            frontmostBundleId: turns.last?.bundleId
         )
         let hasRepeatedTopic = TeachingTopicHistoryStore.hasRepeatedTopic(
             topic: topic,
@@ -87,6 +120,13 @@ enum MemoryGate {
             now: now
         )
 
+        let qualifiesForDistillation = meetsImplicitBar
+            || hasMultiStepPointing
+            || hasRepeatedTopic
+            || hasConfirmationOnAnyTurn
+
+        guard qualifiesForDistillation else { return [] }
+
         // Collect reasons most-specific first so the primary reported reason
         // (`gateReasons.first`, used for analytics and the skill-write trigger)
         // reflects the strongest signal. `.screenTeaching` is the generic
@@ -94,7 +134,7 @@ enum MemoryGate {
         // specific reason like `.repeatedTopic`.
         var skillReasons: [GateReason] = []
 
-        if let lastTurn = session.turns.last,
+        if let lastTurn = turns.last,
            SkillTriggerEvaluator.isConfirmationTranscript(lastTurn.userTranscript) {
             skillReasons.append(.userConfirmed)
         }
@@ -103,26 +143,29 @@ enum MemoryGate {
             skillReasons.append(.repeatedTopic)
         }
 
-        if session.turns.filter(\.pointed).count >= 2 {
+        if hasMultiStepPointing {
             skillReasons.append(.multiStepPointing)
         }
 
         skillReasons.append(.screenTeaching)
 
-        return MemoryGateDecision(
-            sessionId: session.sessionId,
-            passedCategories: [.skill: skillReasons],
-            blockReasons: []
-        )
+        return skillReasons
     }
 
     static func makeSkillWriteTrigger(
         for session: PersistedSession,
         gateReasons: [GateReason]
     ) -> SkillWriteTrigger {
+        makeSkillWriteTrigger(from: session.turns, gateReasons: gateReasons)
+    }
+
+    static func makeSkillWriteTrigger(
+        from turns: [SessionTraceEntry],
+        gateReasons: [GateReason]
+    ) -> SkillWriteTrigger {
         let primaryGateReason = gateReasons.first ?? .screenTeaching
         let skillReason = SkillWriteTrigger.Reason(rawValue: primaryGateReason.rawValue) ?? .screenTeaching
-        let topic = SkillTriggerEvaluator.deriveTopic(from: session.turns)
+        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
         return SkillWriteTrigger(reason: skillReason, topic: topic)
     }
 

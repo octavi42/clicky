@@ -320,11 +320,90 @@ struct MemoryGateTests {
     }
 
     @Test func negativeFeedbackDoesNotCountAsConfirmation() {
+        #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("that was not helpful") == true)
+        #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("that didn't work") == true)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("that was not helpful") == false)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("that didn't work") == false)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("imperfect") == false)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("got it thanks") == true)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("perfect") == true)
+    }
+
+    @Test func meetsImplicitSaveBarOnTwoTurnScreenTeachingWithoutConfirmation() {
+        let turns = [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i save this document?",
+                assistantResponse: "click file then save",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            ),
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "where is the save button?",
+                assistantResponse: "pointing at file menu",
+                bundleId: "com.apple.TextEdit",
+                pointed: false
+            )
+        ]
+
+        #expect(MemoryGate.meetsImplicitSaveBar(turns: turns))
+    }
+
+    @Test func meetsImplicitSaveBarOnTwoPointingEventsWithoutPhrase() {
+        let turns = [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i save this document?",
+                assistantResponse: "click file then save",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            ),
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "where is the save button?",
+                assistantResponse: "pointing at file menu",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            )
+        ]
+
+        #expect(MemoryGate.meetsImplicitSaveBar(turns: turns))
+    }
+
+    @Test func meetsImplicitSaveBarBlocksOneShotTrivialSession() {
+        let turns = [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i save this?",
+                assistantResponse: "click file then save",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            )
+        ]
+
+        #expect(!MemoryGate.meetsImplicitSaveBar(turns: turns))
+    }
+
+    @Test func meetsImplicitSaveBarBlocksWhenLastTurnIsNegativeFeedback() {
+        let turns = [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i export this clip?",
+                assistantResponse: "use the share menu",
+                bundleId: "com.apple.FinalCut",
+                pointed: true
+            ),
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "that was not helpful",
+                assistantResponse: "let me try again",
+                bundleId: "com.apple.FinalCut",
+                pointed: true
+            )
+        ]
+
+        #expect(!MemoryGate.meetsImplicitSaveBar(turns: turns))
     }
 
     @Test func lastTurnNegationDoesNotRecordUserConfirmed() {
