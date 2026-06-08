@@ -2,7 +2,8 @@
 //  SkillTriggerEvaluator.swift
 //  leanring-buddy
 //
-//  Decides when a tutoring session should create or update a teaching skill.
+//  Shared heuristics for MemoryGate and skill synthesis (confirmation phrases,
+//  topic extraction, screen-teaching detection).
 //
 
 import Foundation

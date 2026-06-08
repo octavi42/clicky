@@ -473,8 +473,8 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Coarse outcome heuristic for capture-time persistence. The future memory gate
-    /// can refine this; keep the rules simple and predictable here.
+    /// Coarse outcome heuristic for capture-time persistence. MemoryGate applies
+    /// its own rules at distill time; keep this simple and predictable.
     private func deriveSessionOutcome(from turns: [SessionTraceEntry]) -> SessionOutcome {
         if let lastTurn = turns.last,
            SkillTriggerEvaluator.isConfirmationTranscript(lastTurn.userTranscript) {

@@ -83,7 +83,7 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `SkillMatcher.swift` | ~170 | App/topic matching and duplicate skill pair detection. |
 | `SkillCurator.swift` | ~175 | Time-based stale/archive lifecycle plus throttled LLM merge/patch passes. |
 | `SkillSynthesizer.swift` | ~120 | Post-session skill drafting via Claude API. |
-| `SkillTriggerEvaluator.swift` | ~120 | Decides when to create or update a teaching skill from session traces. |
+| `SkillTriggerEvaluator.swift` | ~110 | Shared heuristics for MemoryGate and skill synthesis (confirmation phrases, topic extraction, screen-teaching detection). |
 | `TeachingPromptBuilder.swift` | ~35 | Composes voice response system prompt with matched teaching skills. |
 | `TeachingSkillsLibraryView.swift` | ~260 | Full skills library UI with status filters, detail view, pin/delete/restore. |
 | `Memory.swift` | ~135 | Category-aware memory model and `MemoryEdit` for the unified memories UI. |
