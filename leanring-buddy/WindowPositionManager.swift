@@ -115,7 +115,7 @@ class WindowPositionManager {
     static func hasScreenRecordingPermission() -> Bool {
         let hasScreenRecordingPermissionNow = CGPreflightScreenCaptureAccess()
         if hasScreenRecordingPermissionNow {
-            UserDefaults.standard.set(true, forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+            ClickyDefaults.shared.set(true, forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
         }
         return hasScreenRecordingPermissionNow
     }
@@ -127,7 +127,7 @@ class WindowPositionManager {
     static func shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch() -> Bool {
         shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch(
             hasScreenRecordingPermissionNow: hasScreenRecordingPermission(),
-            hasPreviouslyConfirmedScreenRecordingPermission: UserDefaults.standard.bool(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+            hasPreviouslyConfirmedScreenRecordingPermission: ClickyDefaults.shared.bool(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
         )
     }
 
@@ -139,7 +139,7 @@ class WindowPositionManager {
     }
 
     static func clearPreviouslyConfirmedScreenRecordingPermission() {
-        UserDefaults.standard.removeObject(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+        ClickyDefaults.shared.removeObject(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
     }
 
     /// Prompts the system dialog for Screen Recording permission.
