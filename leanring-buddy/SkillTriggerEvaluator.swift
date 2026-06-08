@@ -46,14 +46,44 @@ enum SkillTriggerEvaluator {
         "isnt", "wasnt", "wont", "wouldnt", "couldnt", "cant"
     ]
 
+    /// Result/quality words that turn a nearby negation into rejection of the
+    /// help ("not helpful", "didn't work"). A negation that is NOT next to one
+    /// of these (e.g. "I'm not sure where that is") is not negative feedback.
+    private static let negativeFeedbackResultWords: Set<String> = [
+        "helpful", "help", "work", "works", "worked", "working",
+        "right", "correct", "good", "useful"
+    ]
+
+    /// Words that stand on their own as a rejection regardless of negation.
+    private static let standaloneRejectionWords: Set<String> = [
+        "wrong", "incorrect", "useless", "nope"
+    ]
+
     static func isNegativeFeedbackTranscript(_ transcript: String) -> Bool {
         let normalized = transcript
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return false }
 
-        let transcriptWordSet = Set(words(from: normalized))
-        return !negationTokens.isDisjoint(with: transcriptWordSet)
+        let transcriptWords = words(from: normalized)
+        let transcriptWordSet = Set(transcriptWords)
+
+        if !standaloneRejectionWords.isDisjoint(with: transcriptWordSet) {
+            return true
+        }
+
+        // A negation only counts as rejection when it sits next to a
+        // result/quality word. This avoids treating engaged follow-ups like
+        // "I'm not sure where that is" as a thumbs-down on the session.
+        for (wordIndex, word) in transcriptWords.enumerated() where negationTokens.contains(word) {
+            let neighborhoodEnd = min(wordIndex + 3, transcriptWords.count)
+            let neighborhoodWords = Set(transcriptWords[wordIndex..<neighborhoodEnd])
+            if !negativeFeedbackResultWords.isDisjoint(with: neighborhoodWords) {
+                return true
+            }
+        }
+
+        return false
     }
 
     static func isConfirmationTranscript(_ transcript: String) -> Bool {

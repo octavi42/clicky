@@ -322,6 +322,10 @@ struct MemoryGateTests {
     @Test func negativeFeedbackDoesNotCountAsConfirmation() {
         #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("that was not helpful") == true)
         #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("that didn't work") == true)
+        #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("this is wrong") == true)
+        // A bare negation in an engaged follow-up is NOT a thumbs-down.
+        #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("I'm not sure where that is") == false)
+        #expect(SkillTriggerEvaluator.isNegativeFeedbackTranscript("can you show me again") == false)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("that was not helpful") == false)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("that didn't work") == false)
         #expect(SkillTriggerEvaluator.isConfirmationTranscript("imperfect") == false)

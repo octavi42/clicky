@@ -586,6 +586,12 @@ final class CompanionManager: ObservableObject {
 
         if isProactive {
             skillSaveStatus = .saving
+            // Claim the session synchronously so a confirmation turn's
+            // finalizeAndPersistSession (which runs right after this call) does
+            // not start a second, duplicate distill that cancels this proactive
+            // write and surfaces a spurious "failed" banner. Reset on genuine
+            // failure below so a later finalize-time pass can still retry.
+            didDraftSkillForCurrentSession = true
         }
 
         skillWriteTask?.cancel()
@@ -654,9 +660,15 @@ final class CompanionManager: ObservableObject {
 
                 skillSaveStatus = .saved(name: skill.name, skillID: skill.id)
                 scheduleSkillSaveStatusClear()
+            } catch is CancellationError {
+                // Superseded by a newer write (e.g. finalize-time distill).
+                // Leave the save status untouched so the winning task drives it.
             } catch {
                 print("⚠️ Failed to synthesize teaching skill: \(error)")
                 if isProactive {
+                    // Release the synchronous claim so a later finalize-time
+                    // pass can retry distilling this session.
+                    didDraftSkillForCurrentSession = false
                     skillSaveStatus = .failed
                     scheduleSkillSaveStatusClear()
                 }
@@ -1931,6 +1943,15 @@ final class CompanionManager: ObservableObject {
                         do {
                             try await elevenLabsTTSClient.speakText(spokenText)
                             voiceState = .responding
+                            // speakText returns once playback *starts*. Hold the
+                            // responding state — and the "using what you learned"
+                            // chip — until the audio actually finishes so the idle
+                            // boundary below measures genuine user inactivity
+                            // rather than overlapping with TTS playback.
+                            while elevenLabsTTSClient.isPlaying {
+                                try? await Task.sleep(nanoseconds: 150_000_000)
+                                if Task.isCancelled { break }
+                            }
                         } catch {
                             ClickyAnalytics.trackTTSError(error: error.localizedDescription)
                             print("⚠️ ElevenLabs TTS error: \(error)")
