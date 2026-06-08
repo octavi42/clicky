@@ -584,6 +584,11 @@ final class CompanionManager: ObservableObject {
         )
         let primaryQuestion = SkillTriggerEvaluator.primaryTeachingQuestion(from: turns) ?? trigger.topic
 
+        // Tie this write to the session that is open right now. The async task
+        // below can finish after the user has already started a *new* session,
+        // and it must not claim that newer session's draft slot.
+        let draftSessionStartedAt = sessionStartedAt
+
         if isProactive {
             skillSaveStatus = .saving
             // Claim the session synchronously so a confirmation turn's
@@ -641,7 +646,12 @@ final class CompanionManager: ObservableObject {
                     skillId: skill.id
                 )
 
-                didDraftSkillForCurrentSession = true
+                // Only mark the *current* session as drafted. If finalize has
+                // already closed the session this write belonged to (or a new
+                // session has begun), leave the new session's draft slot open.
+                if sessionStartedAt != nil && sessionStartedAt == draftSessionStartedAt {
+                    didDraftSkillForCurrentSession = true
+                }
 
                 ClickyAnalytics.trackTeachingSkillSaved(
                     skillID: skill.id,
@@ -661,8 +671,13 @@ final class CompanionManager: ObservableObject {
                 skillSaveStatus = .saved(name: skill.name, skillID: skill.id)
                 scheduleSkillSaveStatusClear()
             } catch is CancellationError {
-                // Superseded by a newer write (e.g. finalize-time distill).
-                // Leave the save status untouched so the winning task drives it.
+                // Superseded by a newer write (e.g. finalize-time distill). The
+                // winning task drives the status, but if this task had shown the
+                // proactive "Saving..." banner, clear it so the Brain panel does
+                // not stay stuck on saving when no replacement updates it.
+                if case .saving = skillSaveStatus {
+                    skillSaveStatus = .idle
+                }
             } catch {
                 print("⚠️ Failed to synthesize teaching skill: \(error)")
                 if isProactive {
