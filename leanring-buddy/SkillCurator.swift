@@ -138,9 +138,10 @@ enum SkillCurator {
             maxTokens: 1200
         )
 
-        var mergedSkill = primarySkill
-        mergedSkill.body = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var mergedSkill = primarySkill.withSupersededBody(response.text.trimmingCharacters(in: .whitespacesAndNewlines))
         mergedSkill.usageCount = primarySkill.usageCount + duplicateSkill.usageCount
+        mergedSkill.confirmedSuccessCount = primarySkill.confirmedSuccessCount + duplicateSkill.confirmedSuccessCount
+        mergedSkill.triggers = Array(Set(primarySkill.triggers + duplicateSkill.triggers))
         mergedSkill.lastUsed = Date()
         mergedSkill.status = .active
         return mergedSkill
@@ -167,8 +168,7 @@ enum SkillCurator {
             maxTokens: 1200
         )
 
-        var patchedSkill = staleSkill
-        patchedSkill.body = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var patchedSkill = staleSkill.withSupersededBody(response.text.trimmingCharacters(in: .whitespacesAndNewlines))
         patchedSkill.status = .active
         patchedSkill.lastUsed = Date()
         return patchedSkill

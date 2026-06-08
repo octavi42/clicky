@@ -473,4 +473,195 @@ struct TeachingSkillTests {
 
         #expect(duplicatePairs.isEmpty)
     }
+
+    @Test func parsesTriggersConfirmedSuccessAndSupersededBody() throws {
+        let markdown = """
+        ---
+        name: Save in TextEdit
+        description: Walk the user through saving
+        bundleIds:
+          - com.apple.TextEdit
+        triggers:
+          - how do i save
+          - save this document
+        status: active
+        lastUsed: 2026-06-01
+        usageCount: 2
+        confirmedSuccessCount: 1
+        pinned: false
+        taskSlug: save
+        supersededAt: 2026-06-08
+        ---
+
+        updated body with keyboard shortcut.
+
+        <!-- superseded:2026-06-08 -->
+
+        old body used the menu.
+        """
+
+        let skill = try #require(TeachingSkill.parse(id: "teach-textedit-save", markdown: markdown))
+        #expect(skill.triggers == ["how do i save", "save this document"])
+        #expect(skill.confirmedSuccessCount == 1)
+        #expect(skill.supersededAt != nil)
+        #expect(skill.body.contains("updated body"))
+        #expect(skill.previousBody?.contains("old body") == true)
+    }
+
+    @Test func serializesTriggersAndSupersededBodyRoundTrip() throws {
+        let originalSkill = TeachingSkill(
+            id: "teach-textedit-save",
+            name: "Save in TextEdit",
+            description: "Walk the user through saving",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 2,
+            isPinned: false,
+            taskSlug: "save",
+            triggers: ["how do i save", "save this document"],
+            confirmedSuccessCount: 2,
+            supersededAt: Date(),
+            previousBody: "old guidance",
+            body: "new guidance"
+        )
+
+        let reparsedSkill = try #require(
+            TeachingSkill.parse(id: originalSkill.id, markdown: originalSkill.serialize())
+        )
+        #expect(reparsedSkill.triggers == originalSkill.triggers)
+        #expect(reparsedSkill.confirmedSuccessCount == 2)
+        #expect(reparsedSkill.body == "new guidance")
+        #expect(reparsedSkill.previousBody == "old guidance")
+    }
+
+    @Test func triggerPhraseMatchBoostsSkillAboveTokenOverlap() {
+        let triggeredSkill = TeachingSkill(
+            id: "teach-textedit-save",
+            name: "Save in TextEdit",
+            description: "Walk the user through saving",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 0,
+            isPinned: false,
+            taskSlug: "save",
+            triggers: ["how do i save this document"],
+            body: "unrelated workflow"
+        )
+        let keywordSkill = TeachingSkill(
+            id: "teach-textedit-export",
+            name: "Export in TextEdit",
+            description: "Walk the user through exporting",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 5,
+            isPinned: false,
+            taskSlug: "export",
+            body: "how do i save this document using export panel"
+        )
+
+        let matches = SkillMatcher.matchSkills(
+            from: [triggeredSkill, keywordSkill],
+            bundleId: "com.apple.TextEdit",
+            transcript: "how do i save this document?"
+        )
+
+        #expect(matches.first?.skill.id == "teach-textedit-save")
+    }
+
+    @Test func triggerPhraseMatchesOnWordBoundariesNotSubstrings() {
+        let skill = TeachingSkill(
+            id: "teach-help",
+            name: "Open help",
+            description: "Open the help menu",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 0,
+            isPinned: false,
+            taskSlug: "help",
+            triggers: ["help"],
+            body: "open help"
+        )
+
+        // Whole-word match fires.
+        #expect(SkillMatcher.triggerPhraseMatchScore(for: skill, in: "can you help me") > 0)
+        // Substring inside an unrelated word ("helpful") must not fire.
+        #expect(SkillMatcher.triggerPhraseMatchScore(for: skill, in: "that was helpful") == 0)
+    }
+
+    @Test func recencyAndTrustScoringPreferRecentlyConfirmedSkill() {
+        let recentConfirmedSkill = TeachingSkill(
+            id: "teach-textedit-save",
+            name: "Save in TextEdit",
+            description: "Walk the user through saving",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 1,
+            isPinned: false,
+            taskSlug: "save",
+            confirmedSuccessCount: 4,
+            body: "save document steps"
+        )
+        let staleSkill = TeachingSkill(
+            id: "teach-textedit-save-copy",
+            name: "Save document in TextEdit",
+            description: "Help save the current document",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date().addingTimeInterval(-40 * 24 * 60 * 60),
+            usageCount: 6,
+            isPinned: false,
+            taskSlug: "save",
+            confirmedSuccessCount: 0,
+            body: "save document using menu"
+        )
+
+        let matches = SkillMatcher.matchSkills(
+            from: [recentConfirmedSkill, staleSkill],
+            bundleId: "com.apple.TextEdit",
+            transcript: "how do I save this document?"
+        )
+
+        #expect(matches.first?.skill.id == "teach-textedit-save")
+    }
+
+    @Test func findSkillForUpdateMatchesTriggerPhrase() {
+        let existingSkill = TeachingSkill(
+            id: "teach-textedit-save",
+            name: "Save in TextEdit",
+            description: "Walk the user through saving",
+            bundleIds: ["com.apple.TextEdit"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 1,
+            isPinned: false,
+            taskSlug: "save",
+            triggers: ["save this document in textedit"],
+            body: "use command s"
+        )
+
+        let matchedSkill = SkillMatcher.findSkillForUpdate(
+            in: [existingSkill],
+            targetBundleId: "com.mitchellh.ghostty",
+            primaryQuestion: "save this document in textedit"
+        )
+
+        #expect(matchedSkill?.id == "teach-textedit-save")
+    }
+
+    @Test func parsesTriggersLineFromSynthesizerResponse() {
+        let parsed = SkillSynthesizer.parseTriggersLine(from: """
+        triggers: how do i save | save this document
+
+        step one: press command s.
+        step two: choose save.
+        """)
+
+        #expect(parsed.triggers == ["how do i save", "save this document"])
+        #expect(parsed.body.contains("step one"))
+    }
 }

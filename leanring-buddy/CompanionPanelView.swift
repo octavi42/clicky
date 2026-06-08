@@ -1078,7 +1078,7 @@ struct CompanionPanelView: View {
                         .foregroundColor(DS.Colors.textSecondary)
 
                     Text(companionManager.isLearningFromSessionsEnabled
-                         ? "Clicky remembers what you teach it."
+                         ? "Clicky learns from multi-step tutoring on screen."
                          : "Auto-save paused — existing memories stay.")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
@@ -1100,6 +1100,10 @@ struct CompanionPanelView: View {
             .padding(.horizontal, 12)
             .padding(.top, 12)
             .padding(.bottom, 10)
+
+            skillSaveStatusBanner
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
 
             Divider()
                 .background(DS.Colors.borderSubtle.opacity(0.6))
@@ -1165,6 +1169,50 @@ struct CompanionPanelView: View {
             return "1 memory saved"
         default:
             return "\(savedMemoryCount) memories saved"
+        }
+    }
+
+    @ViewBuilder
+    private var skillSaveStatusBanner: some View {
+        switch companionManager.skillSaveStatus {
+        case .idle:
+            EmptyView()
+        case .saving:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Saving what you learned...")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+            }
+            .padding(.vertical, 4)
+            .accessibilityIdentifier("clicky.panel.teaching-skills.saving-banner")
+        case .saved(let skillName, _):
+            HStack(spacing: 8) {
+                Text("Learned: \(skillName)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button("Undo") {
+                    companionManager.undoLastSavedSkill()
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.accent)
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .accessibilityIdentifier("clicky.panel.teaching-skills.undo")
+            }
+            .padding(.vertical, 4)
+            .accessibilityIdentifier("clicky.panel.teaching-skills.saved-banner")
+        case .failed:
+            Text("Couldn't save this skill right now.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("clicky.panel.teaching-skills.failed-banner")
         }
     }
 

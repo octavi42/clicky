@@ -79,7 +79,10 @@ struct NicheDiscoveryTests {
     }
 
     @Test func neutralSafariRequiresExplicitOrStableNicheBeforeSuggesting() {
-        let manager = NicheDiscoveryManager()
+        let userDefaults = UserDefaults(suiteName: "NicheDiscoveryTests.neutral-safari")!
+        defer { userDefaults.removePersistentDomain(forName: "NicheDiscoveryTests.neutral-safari") }
+
+        let manager = NicheDiscoveryManager(userDefaults: userDefaults)
         let snapshot = manager.suggestionSnapshot(frontmostBundleId: "com.apple.Safari")
 
         #expect(snapshot.mode == .generalFallback)
@@ -170,6 +173,9 @@ struct NicheDiscoveryTests {
 
         let collector = AppUsageCollector(usageFileURL: usageFileURL)
         collector.start()
+        // start() captures whatever app is frontmost during the test run (usually Xcode).
+        // Re-bind to Ghostty so Safari-as-neutral falls back to the recent developer app.
+        collector.recordFrontmostApplicationChange(to: "com.mitchellh.ghostty")
 
         let manager = NicheDiscoveryManager(
             userDefaults: userDefaults,

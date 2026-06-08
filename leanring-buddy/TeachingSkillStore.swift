@@ -80,6 +80,14 @@ final class TeachingSkillStore {
         return try saveSkill(updated)
     }
 
+    func markConfirmedSuccess(forSkillIDs skillIDs: [String]) throws {
+        for skillID in Set(skillIDs) {
+            guard var skill = skill(withID: skillID) else { continue }
+            skill.confirmedSuccessCount += 1
+            _ = try saveSkill(skill)
+        }
+    }
+
     func setPinned(id: String, pinned: Bool) throws {
         guard var skill = skill(withID: id) else { return }
         skill.isPinned = pinned

@@ -21,6 +21,13 @@ enum CompanionVoiceState {
     case responding
 }
 
+enum SkillSaveStatus: Equatable {
+    case idle
+    case saving
+    case saved(name: String, skillID: String)
+    case failed
+}
+
 @MainActor
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
@@ -85,6 +92,8 @@ final class CompanionManager: ObservableObject {
     private let topicHistoryStore = TeachingTopicHistoryStore()
     private let sessionStore = SessionStore()
     private var sessionTrace: [SessionTraceEntry] = []
+    /// Skill IDs injected into responses during the open session, credited on user confirmation.
+    private var appliedSkillIDsInCurrentSession: [String] = []
     private var sessionStartedAt: Date?
     private var sessionIdleTimer: Timer?
     /// True from push-to-talk press until the voice pipeline returns to idle.
@@ -93,6 +102,9 @@ final class CompanionManager: ObservableObject {
     private var panelClosedObserver: NSObjectProtocol?
     private var skillWriteTask: Task<Void, Never>?
     private var curatorLLMTask: Task<Void, Never>?
+    /// Prevents proactive and finalize-time distill from writing the same session twice.
+    private var didDraftSkillForCurrentSession = false
+    private var skillSaveStatusClearTask: Task<Void, Never>?
 
     private let nicheDiscoveryManager = NicheDiscoveryManager()
     private var frontmostAppObserver: NSObjectProtocol?
@@ -112,6 +124,9 @@ final class CompanionManager: ObservableObject {
 
     /// When set, the menu bar panel opens the memories library to this memory ID.
     @Published var pendingMemoryIDToOpenInLibrary: String?
+
+    /// Visible save progress for implicit skill drafting in the memories panel.
+    @Published private(set) var skillSaveStatus: SkillSaveStatus = .idle
 
     /// When disabled, Clicky still reads skills but will not create new ones.
     @Published var isLearningFromSessionsEnabled: Bool = ClickyDefaults.shared.object(forKey: "isLearningFromSessionsEnabled") == nil
@@ -220,6 +235,13 @@ final class CompanionManager: ObservableObject {
         } catch {
             print("⚠️ Failed to restore teaching skill \(id): \(error)")
         }
+    }
+
+    func undoLastSavedSkill() {
+        guard case .saved(_, let skillID) = skillSaveStatus else { return }
+        deleteTeachingSkill(id: skillID)
+        skillSaveStatusClearTask?.cancel()
+        skillSaveStatus = .idle
     }
 
     func teachingSkills(withStatus status: TeachingSkillStatus?) -> [TeachingSkill] {
@@ -390,6 +412,7 @@ final class CompanionManager: ObservableObject {
 
         if wasEmptyBeforeAppend {
             sessionStartedAt = Date()
+            didDraftSkillForCurrentSession = false
         }
 
         if sessionTrace.count > 20 {
@@ -401,7 +424,11 @@ final class CompanionManager: ObservableObject {
         // fire mid-speech on a long reply and split one conversation into two sessions.
         // It is armed when the response task returns to idle (after TTS) instead.
 
-        if !SkillTriggerEvaluator.isConfirmationTranscript(transcript) {
+        if SkillTriggerEvaluator.isConfirmationTranscript(transcript) {
+            try? teachingSkillStore.markConfirmedSuccess(forSkillIDs: appliedSkillIDsInCurrentSession)
+            appliedSkillIDsInCurrentSession.removeAll()
+            syncTeachingSkillsFromStore()
+        } else {
             let topic = SkillTriggerEvaluator.deriveTopic(fromQuestion: transcript)
             topicHistoryStore.recordTopic(
                 topic: topic,
@@ -461,10 +488,14 @@ final class CompanionManager: ObservableObject {
         do {
             let savedURL = try sessionStore.save(session)
             print("💾 Persisted session to \(savedURL.path)")
+            // Run MemoryGate before clearing in-memory session state so
+            // didDraftSkillForCurrentSession can suppress a duplicate distill.
+            runMemoryGate(on: session)
             // Only discard the in-memory session once it is safely on disk.
             sessionStartedAt = nil
             sessionTrace.removeAll()
-            runMemoryGate(on: session)
+            appliedSkillIDsInCurrentSession.removeAll()
+            didDraftSkillForCurrentSession = false
         } catch {
             // Keep the trace and re-arm the idle timer so a transient I/O error
             // gets another chance to persist instead of silently losing the capture.
@@ -473,8 +504,8 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Coarse outcome heuristic for capture-time persistence. The future memory gate
-    /// can refine this; keep the rules simple and predictable here.
+    /// Coarse outcome heuristic for capture-time persistence. MemoryGate applies
+    /// its own rules at distill time; keep this simple and predictable.
     private func deriveSessionOutcome(from turns: [SessionTraceEntry]) -> SessionOutcome {
         if let lastTurn = turns.last,
            SkillTriggerEvaluator.isConfirmationTranscript(lastTurn.userTranscript) {
@@ -520,28 +551,61 @@ final class CompanionManager: ObservableObject {
         )
 
         guard decision.shouldDistillSkill else { return }
+        guard !didDraftSkillForCurrentSession else { return }
 
-        distillSkill(
-            from: session.turns,
-            gateReasons: skillGateReasons,
-            session: session
+        distillSkill(from: session.turns, gateReasons: skillGateReasons)
+    }
+
+    private func maybeProactivelyDraftSkill() {
+        guard isLearningFromSessionsEnabled else { return }
+        guard !didDraftSkillForCurrentSession else { return }
+        guard MemoryGate.meetsImplicitSaveBar(turns: sessionTrace) else { return }
+
+        let gateReasons = MemoryGate.gateReasonsForSkillDistillation(
+            turns: sessionTrace,
+            topicHistory: topicHistoryStore.entries
         )
+        guard !gateReasons.isEmpty else { return }
+
+        distillSkill(from: sessionTrace, gateReasons: gateReasons, isProactive: true)
     }
 
     private func distillSkill(
         from turns: [SessionTraceEntry],
         gateReasons: [GateReason],
-        session: PersistedSession
+        isProactive: Bool = false
     ) {
-        let trigger = MemoryGate.makeSkillWriteTrigger(for: session, gateReasons: gateReasons)
+        let trigger = MemoryGate.makeSkillWriteTrigger(from: turns, gateReasons: gateReasons)
         ClickyAnalytics.trackTeachingSkillWriteTriggered(reason: trigger.reason.rawValue, topic: trigger.topic)
 
         let targetBundleId = SkillTargetAppResolver.resolveTargetBundleId(
             from: turns,
-            frontmostBundleId: session.turns.last?.bundleId ?? frontmostApplicationBundleId()
+            frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
         )
         let primaryQuestion = SkillTriggerEvaluator.primaryTeachingQuestion(from: turns) ?? trigger.topic
-        skillWriteTask?.cancel()
+
+        // Tie this write to the session that is open right now. The async task
+        // below can finish after the user has already started a *new* session,
+        // and it must not claim that newer session's draft slot.
+        let draftSessionStartedAt = sessionStartedAt
+
+        if isProactive {
+            skillSaveStatus = .saving
+            // Claim the session synchronously so a confirmation turn's
+            // finalizeAndPersistSession (which runs right after this call) does
+            // not start a second, duplicate distill that cancels this proactive
+            // write and surfaces a spurious "failed" banner. On genuine failure
+            // below the claim is released so a still-open session can retry at
+            // finalize time (a session already finalized this turn cannot).
+            didDraftSkillForCurrentSession = true
+        }
+
+        // Do NOT cancel a previously launched write here. Within one session
+        // didDraftSkillForCurrentSession already prevents a duplicate distill,
+        // and cancelling across sessions could abort an in-flight write from a
+        // prior (already-finalized) session before it persisted, dropping that
+        // session's skill entirely. Each write owns its own snapshot and runs
+        // to completion; main-actor isolation serializes the store writes.
         skillWriteTask = Task {
             do {
                 let existingSkill = SkillMatcher.findSkillForUpdate(
@@ -560,6 +624,19 @@ final class CompanionManager: ObservableObject {
 
                 guard !Task.isCancelled else { return }
 
+                // The user may have rejected the help on a turn that arrived
+                // while synthesis was in flight. Don't persist a skill they just
+                // thumbs-downed (only relevant for the still-open session this
+                // proactive write belongs to).
+                if isProactive,
+                   sessionStartedAt == draftSessionStartedAt,
+                   let latestTurn = sessionTrace.last,
+                   SkillTriggerEvaluator.isNegativeFeedbackTranscript(latestTurn.userTranscript) {
+                    didDraftSkillForCurrentSession = false
+                    if case .saving = skillSaveStatus { skillSaveStatus = .idle }
+                    return
+                }
+
                 let metadata = SkillSynthesizer.buildSkillMetadata(
                     sessionTrace: turns,
                     trigger: trigger,
@@ -571,6 +648,7 @@ final class CompanionManager: ObservableObject {
                     name: synthesized.name,
                     description: synthesized.description,
                     body: synthesized.body,
+                    triggers: synthesized.triggers,
                     targetBundleId: targetBundleId,
                     taskSlug: metadata.taskSlug,
                     primaryQuestion: primaryQuestion,
@@ -587,6 +665,13 @@ final class CompanionManager: ObservableObject {
                     skillId: skill.id
                 )
 
+                // Only mark the *current* session as drafted. If finalize has
+                // already closed the session this write belonged to (or a new
+                // session has begun), leave the new session's draft slot open.
+                if sessionStartedAt != nil && sessionStartedAt == draftSessionStartedAt {
+                    didDraftSkillForCurrentSession = true
+                }
+
                 ClickyAnalytics.trackTeachingSkillSaved(
                     skillID: skill.id,
                     reason: trigger.reason.rawValue,
@@ -601,8 +686,39 @@ final class CompanionManager: ObservableObject {
                 })
                 writeE2EArtifactsIfNeeded()
                 print("📚 Saved teaching skill: \(skill.id)")
+
+                skillSaveStatus = .saved(name: skill.name, skillID: skill.id)
+                scheduleSkillSaveStatusClear()
+            } catch is CancellationError {
+                // Superseded by a newer write (e.g. finalize-time distill). The
+                // winning task drives the status, but if this task had shown the
+                // proactive "Saving..." banner, clear it so the Brain panel does
+                // not stay stuck on saving when no replacement updates it.
+                if case .saving = skillSaveStatus {
+                    skillSaveStatus = .idle
+                }
             } catch {
                 print("⚠️ Failed to synthesize teaching skill: \(error)")
+                if isProactive {
+                    // Release the synchronous claim so a later finalize-time
+                    // pass can retry distilling this session.
+                    didDraftSkillForCurrentSession = false
+                    skillSaveStatus = .failed
+                    scheduleSkillSaveStatusClear()
+                }
+            }
+        }
+    }
+
+    private func scheduleSkillSaveStatusClear() {
+        skillSaveStatusClearTask?.cancel()
+        skillSaveStatusClearTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            if case .saved = skillSaveStatus {
+                skillSaveStatus = .idle
+            } else if case .failed = skillSaveStatus {
+                skillSaveStatus = .idle
             }
         }
     }
@@ -1736,6 +1852,7 @@ final class CompanionManager: ObservableObject {
                     for skill in matchedTeachingSkills {
                         _ = try? teachingSkillStore.markUsed(skill)
                     }
+                    appliedSkillIDsInCurrentSession.append(contentsOf: matchedTeachingSkills.map(\.id))
                     syncTeachingSkillsFromStore()
 
                     if !matchedTeachingSkills.isEmpty {
@@ -1844,6 +1961,7 @@ final class CompanionManager: ObservableObject {
                     spokenResponse: spokenText,
                     pointed: hasPointCoordinate
                 )
+                maybeProactivelyDraftSkill()
                 if SkillTriggerEvaluator.isConfirmationTranscript(transcript) {
                     finalizeAndPersistSession(outcome: .success)
                 }
@@ -1859,6 +1977,15 @@ final class CompanionManager: ObservableObject {
                         do {
                             try await elevenLabsTTSClient.speakText(spokenText)
                             voiceState = .responding
+                            // speakText returns once playback *starts*. Hold the
+                            // responding state — and the "using what you learned"
+                            // chip — until the audio actually finishes so the idle
+                            // boundary below measures genuine user inactivity
+                            // rather than overlapping with TTS playback.
+                            while elevenLabsTTSClient.isPlaying {
+                                try? await Task.sleep(nanoseconds: 150_000_000)
+                                if Task.isCancelled { break }
+                            }
                         } catch {
                             ClickyAnalytics.trackTTSError(error: error.localizedDescription)
                             print("⚠️ ElevenLabs TTS error: \(error)")
@@ -1876,6 +2003,7 @@ final class CompanionManager: ObservableObject {
 
             if !Task.isCancelled {
                 voiceState = .idle
+                lastMatchedSkillNames = []
                 isPushToTalkInteractionActive = false
                 // Arm the idle boundary now that the assistant has finished speaking,
                 // so the 30s countdown measures genuine user inactivity rather than

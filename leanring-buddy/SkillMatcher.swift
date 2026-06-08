@@ -34,8 +34,10 @@ enum SkillMatcher {
         from skills: [TeachingSkill],
         bundleId: String?,
         transcript: String,
-        limit: Int = 3
+        limit: Int = 3,
+        now: Date = Date()
     ) -> [SkillMatch] {
+        let normalizedTranscript = transcript.lowercased()
         let queryTokens = tokenize(transcript)
         let eligibleSkills = skills.filter { skill in
             skill.status != .archived || skill.isPinned
@@ -46,6 +48,10 @@ enum SkillMatcher {
 
             if let bundleId, skill.bundleIds.contains(bundleId) {
                 score += 12
+            }
+
+            if triggerPhraseMatchScore(for: skill, in: normalizedTranscript) > 0 {
+                score += 20
             }
 
             let haystackTokens = Set(
@@ -59,6 +65,8 @@ enum SkillMatcher {
                 score += 1
             }
             score += min(skill.usageCount, 5)
+            score += min(skill.confirmedSuccessCount, 5)
+            score += recencyBoost(for: skill, now: now)
 
             return score > 0 ? SkillMatch(skill: skill, score: score) : nil
         }
@@ -115,6 +123,13 @@ enum SkillMatcher {
             }
         }
 
+        let normalizedQuestion = primaryQuestion.lowercased()
+        if let triggerMatchedSkill = skills.max(by: { lhs, rhs in
+            triggerPhraseMatchScore(for: lhs, in: normalizedQuestion) < triggerPhraseMatchScore(for: rhs, in: normalizedQuestion)
+        }), triggerPhraseMatchScore(for: triggerMatchedSkill, in: normalizedQuestion) > 0 {
+            return triggerMatchedSkill
+        }
+
         let topicTokens = Set(meaningfulTokens(primaryQuestion))
         guard !topicTokens.isEmpty else { return nil }
 
@@ -127,7 +142,7 @@ enum SkillMatcher {
             overlapScore(lhs, topicTokens: topicTokens) < overlapScore(rhs, topicTokens: topicTokens)
         }
         .flatMap { candidate in
-            overlapScore(candidate, topicTokens: topicTokens) >= 2 ? candidate : nil
+            overlapScore(candidate, topicTokens: topicTokens) >= 1 ? candidate : nil
         }
     }
 
@@ -206,6 +221,46 @@ enum SkillMatcher {
             tokenize(skill.body)
         )
         return topicTokens.filter { skillTokens.contains($0) }.count
+    }
+
+    static func triggerPhraseMatchScore(for skill: TeachingSkill, in normalizedText: String) -> Int {
+        let transcriptWords = wordSequence(from: normalizedText)
+        return skill.triggers.reduce(0) { highestScore, triggerPhrase in
+            let triggerWords = wordSequence(from: triggerPhrase.lowercased())
+            // Match on whole-word boundaries so a short trigger like "help"
+            // does not fire inside unrelated words such as "helpful".
+            let triggerCharacterCount = triggerWords.joined(separator: " ").count
+            guard triggerCharacterCount >= 3 else { return highestScore }
+            guard containsContiguousWords(triggerWords, in: transcriptWords) else { return highestScore }
+            return max(highestScore, triggerCharacterCount)
+        }
+    }
+
+    /// Splits text into lowercased word tokens, preserving short words and order
+    /// so contiguous phrase matching works ("export the video" → matchable).
+    private static func wordSequence(from text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private static func containsContiguousWords(_ phraseWords: [String], in transcriptWords: [String]) -> Bool {
+        guard !phraseWords.isEmpty, phraseWords.count <= transcriptWords.count else { return false }
+        for startIndex in 0...(transcriptWords.count - phraseWords.count) {
+            if Array(transcriptWords[startIndex..<startIndex + phraseWords.count]) == phraseWords {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func recencyBoost(for skill: TeachingSkill, now: Date) -> Int {
+        guard let lastUsed = skill.lastUsed else { return 0 }
+        let daysSinceLastUse = Calendar.current.dateComponents([.day], from: lastUsed, to: now).day ?? Int.max
+        if daysSinceLastUse <= 7 { return 3 }
+        if daysSinceLastUse <= 30 { return 1 }
+        return 0
     }
 
     static func tokenize(_ text: String) -> [String] {

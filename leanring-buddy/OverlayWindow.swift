@@ -161,6 +161,9 @@ struct BlueCursorView: View {
     /// Starts at 0.5 and springs to 1.0 when the first character appears.
     @State private var navigationBubbleScale: CGFloat = 1.0
 
+    @State private var learnedSkillToastText: String = ""
+    @State private var learnedSkillToastOpacity: Double = 0.0
+
     /// True when the buddy is flying BACK to the cursor after pointing.
     /// Only during the return flight can cursor movement cancel the animation.
     @State private var isReturningToCursor: Bool = false
@@ -341,6 +344,53 @@ struct BlueCursorView: View {
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: companionManager.voiceState)
 
+            // Brief toast when a new skill is saved mid-session
+            if buddyIsVisibleOnThisScreen && !learnedSkillToastText.isEmpty {
+                Text(learnedSkillToastText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(DS.Colors.surface1.opacity(0.92))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(DS.Colors.borderSubtle.opacity(0.6), lineWidth: 0.8)
+                            )
+                    )
+                    .fixedSize()
+                    .accessibilityIdentifier("clicky.overlay.learned-skill-toast")
+                    .opacity(learnedSkillToastOpacity)
+                    .position(x: cursorPosition.x + 10, y: cursorPosition.y - 40)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+            }
+
+            // Learned-skill chip — visible while TTS plays when a teaching skill was applied
+            if buddyIsVisibleOnThisScreen
+                && companionManager.voiceState == .responding
+                && !companionManager.lastMatchedSkillNames.isEmpty {
+                Text("using what you learned")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(DS.Colors.surface1.opacity(0.92))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(DS.Colors.borderSubtle.opacity(0.6), lineWidth: 0.8)
+                            )
+                    )
+                    .fixedSize()
+                    .accessibilityIdentifier("clicky.overlay.learned-skill-chip")
+                    .opacity(cursorOpacity)
+                    .position(x: cursorPosition.x + 10, y: cursorPosition.y - 22)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
+                    .animation(.easeIn(duration: 0.2), value: companionManager.voiceState)
+            }
+
         }
         .frame(width: screenFrame.width, height: screenFrame.height)
         .ignoresSafeArea()
@@ -372,6 +422,19 @@ struct BlueCursorView: View {
             timer?.invalidate()
             navigationAnimationTimer?.invalidate()
             companionManager.tearDownOnboardingVideo()
+        }
+        .onChange(of: companionManager.skillSaveStatus) { newStatus in
+            guard case .saved(let skillName, _) = newStatus else { return }
+            learnedSkillToastText = "learned \(skillName.lowercased())"
+            learnedSkillToastOpacity = 1.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                learnedSkillToastOpacity = 0.0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+                if learnedSkillToastOpacity == 0 {
+                    learnedSkillToastText = ""
+                }
+            }
         }
         .onChange(of: companionManager.detectedElementScreenLocation) { newLocation in
             // When a UI element location is detected, navigate the buddy to
