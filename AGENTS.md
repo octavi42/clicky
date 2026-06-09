@@ -53,7 +53,7 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | File | Lines | Purpose |
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~89 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate` which creates `MenuBarPanelManager` and starts `CompanionManager`. No main window — the app lives entirely in the status bar. |
-| `CompanionManager.swift` | ~1070 | Central state machine. Owns dictation, shortcut monitoring, screen capture, Claude API, ElevenLabs TTS, overlay management, teaching skills, and niche discovery. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → Claude → TTS → pointing pipeline. |
+| `CompanionManager.swift` | ~2300 | Central state machine. Owns dictation, shortcut monitoring, screen capture, Claude API, ElevenLabs TTS, overlay management, teaching skills, preference/routine memory distillation, and niche discovery. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → Claude → TTS → pointing pipeline. |
 | `MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
 | `CompanionPanelView.swift` | ~850 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, niche onboarding/suggestions, teaching skills UI, model picker (Sonnet/Opus), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
 | `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
@@ -71,23 +71,29 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `ElevenLabsTTSClient.swift` | ~81 | ElevenLabs TTS client. Sends text to the Worker proxy, plays back audio via `AVAudioPlayer`. Exposes `isPlaying` for transient cursor scheduling. |
 | `ElementLocationDetector.swift` | ~335 | Detects UI element locations in screenshots for cursor pointing. |
 | `DesignSystem.swift` | ~880 | Design system tokens — colors, corner radii, shared styles. All UI references `DS.Colors`, `DS.CornerRadius`, etc. |
-| `ClickyAnalytics.swift` | ~175 | PostHog analytics integration for usage tracking. |
+| `ClickyAnalytics.swift` | ~210 | PostHog analytics integration for usage tracking. |
 | `WindowPositionManager.swift` | ~262 | Window placement logic, Screen Recording permission flow, and accessibility permission helpers. |
 | `AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
-| `TeachingTopicHistoryStore.swift` | ~95 | Persists teaching topic tokens, bundle IDs, and timestamps to `~/.clicky/topic-history.json` for cross-session repeat detection. |
+| `TeachingTopicHistoryStore.swift` | ~150 | Persists teaching topic tokens, bundle IDs, and timestamps to `~/.clicky/topic-history.json` for cross-session repeat and routine recurrence detection. |
 | `PersistedSession.swift` | ~25 | Codable on-disk session model (`sessionId`, `startedAt`, `endedAt`, `outcome`, `privacyOptOut`, `appsUsed`, `turns`) for the memory pipeline capture step. |
 | `SessionStore.swift` | ~100 | Filesystem store for voice sessions at `~/.clicky/sessions/<yyyy-MM-dd>/<sessionId>.json` with ISO8601 JSON encoding and 7-day retention cleanup. |
-| `MemoryGate.swift` | ~130 | Cold-path gate: cheap rules over a `PersistedSession` deciding whether to distill skills (and future preference/routine categories). Runs after session finalize. |
+| `MemoryGate.swift` | ~250 | Cold-path gate: cheap rules over a `PersistedSession` deciding whether to distill skills, preferences, and routines. Runs after session finalize. |
+| `PreferenceSignalDetector.swift` | ~110 | Deterministic phrase matching for stated user preferences in session transcripts. Used by MemoryGate. |
 | `TeachingSkillStore.swift` | ~100 | Create/read/update/delete teaching skills at `~/.clicky/skills/<name>/SKILL.md`. |
 | `TeachingSkill.swift` | ~280 | Model and YAML frontmatter parsing for teaching skills. |
 | `SkillMatcher.swift` | ~170 | App/topic matching and duplicate skill pair detection. |
 | `SkillCurator.swift` | ~175 | Time-based stale/archive lifecycle plus throttled LLM merge/patch passes. |
 | `SkillSynthesizer.swift` | ~120 | Post-session skill drafting via Claude API. |
+| `PreferenceSynthesizer.swift` | ~215 | Post-session preference memory drafting via Claude API. Folds the update-vs-create dedup decision into the synthesis call (LLM judge over recalled candidates) instead of a similarity threshold. Same-axis matches use last-write-wins: the latest stated value updates the existing memory even when it reverses it, so the user never holds two contradictory active preferences. |
+| `RoutineSynthesizer.swift` | ~225 | Post-session routine memory drafting via Claude API. Folds the update-vs-create dedup decision into the synthesis call (LLM judge over recalled candidates). Same-workflow matches use last-write-wins: the latest run's steps replace the old ones. |
+| `AuxiliaryMemoryMatcher.swift` | ~165 | Stable ID generation, dedup lookup, and routine matching for preference/routine memories. Both preferences and routines use a two-pass dedup: `mergeCandidates` (wide-net recall) then an LLM judge in `PreferenceSynthesizer` / `RoutineSynthesizer`. `decideDedup` is the threshold reference path validated by the eval harness. Hybrid lexical + Apple embedding similarity with conflict guard. |
+| `MemorySimilarityScorer.swift` | ~100 | Pluggable dedup scorers: lexical Dice, Apple `NLEmbedding`, and hybrid combiner |
+| `PreferenceConflictDetector.swift` | ~75 | Blocks merge when two preference texts express opposite choices on the same axis |
 | `SkillTriggerEvaluator.swift` | ~110 | Shared heuristics for MemoryGate and skill synthesis (confirmation phrases, topic extraction, screen-teaching detection). |
-| `TeachingPromptBuilder.swift` | ~35 | Composes voice response system prompt with matched teaching skills. |
+| `TeachingPromptBuilder.swift` | ~100 | Composes voice response system prompt with matched teaching skills, active preferences, and matched routines. |
 | `TeachingSkillsLibraryView.swift` | ~260 | Full skills library UI with status filters, detail view, pin/delete/restore. |
 | `Memory.swift` | ~135 | Category-aware memory model and `MemoryEdit` for the unified memories UI. |
-| `AuxiliaryMemoryStore.swift` | ~78 | Persists preference and routine memories until dedicated generators land. |
+| `AuxiliaryMemoryStore.swift` | ~78 | Persists preference and routine memories at `~/.clicky/auxiliary-memories.json`. |
 | `MemoriesLibraryView.swift` | ~460 | Unified memories library with category tabs, detail view, edit, and delete. |
 | `DummyMemorySeeder.swift` | ~146 | DEBUG-only seeder for sample memories during local development. |
 | `ClickyE2EConfiguration.swift` | ~75 | Launch flags and E2E debug artifact paths for automated tests. |
@@ -100,6 +106,7 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `leanring-buddyTests/TeachingSkillTests.swift` | ~320 | Unit tests for skill parsing, matching, triggers, prompt injection, duplicate detection. |
 | `leanring-buddyTests/MemoryTests.swift` | ~196 | Unit tests for memory adapter, filtering, update round-trip, and delete. |
 | `leanring-buddyTests/ActivityStoreTests.swift` | ~175 | Unit tests for transition edge counting, pruning, suppression, and routine detection thresholds. |
+| `leanring-buddyTests/MemoryDedupEvalTests.swift` | ~220 | Offline dedup eval harness with labeled fixture pairs; regression guard for merge vs separate decisions. |
 | `tests/e2e/full-stack/` | — | Scaffold for full user-perspective E2E (BlackHole, PTT simulation, Peekaboo). |
 | `worker/src/index.ts` | ~142 | Cloudflare Worker proxy. Three routes: `/chat` (Claude), `/tts` (ElevenLabs), `/transcribe-token` (AssemblyAI temp token). |
 

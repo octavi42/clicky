@@ -96,11 +96,22 @@ final class CompanionManager: ObservableObject {
     private var appliedSkillIDsInCurrentSession: [String] = []
     private var sessionStartedAt: Date?
     private var sessionIdleTimer: Timer?
+    /// Set when the open session contains a stated preference. Shortens the idle
+    /// boundary so explicit preferences ("from now on…") are distilled and saved
+    /// promptly instead of waiting the full inactivity window.
+    private var sessionContainsStatedPreference = false
+    /// Idle window before a session finalizes. Default measures genuine inactivity;
+    /// the shorter window applies once a stated preference is detected so the save
+    /// toast appears quickly after the user finishes speaking.
+    private static let defaultSessionIdleInterval: TimeInterval = 30
+    private static let statedPreferenceSessionIdleInterval: TimeInterval = 6
     /// True from push-to-talk press until the voice pipeline returns to idle.
     /// Prevents panel-close finalization while the menu bar panel is auto-dismissed on PTT.
     private var isPushToTalkInteractionActive = false
     private var panelClosedObserver: NSObjectProtocol?
     private var skillWriteTask: Task<Void, Never>?
+    private var preferenceWriteTask: Task<Void, Never>?
+    private var routineWriteTask: Task<Void, Never>?
     private var curatorLLMTask: Task<Void, Never>?
     /// Prevents proactive and finalize-time distill from writing the same session twice.
     private var didDraftSkillForCurrentSession = false
@@ -405,6 +416,30 @@ final class CompanionManager: ObservableObject {
         return matches.map(\.skill)
     }
 
+    private func activePreferences(bundleId: String?) -> [Memory] {
+        let activePreferences = auxiliaryMemoryStore.memories(for: .preference).filter { memory in
+            guard memory.status == .active else { return false }
+            // App-agnostic preferences (no bundleIds) always apply. App-scoped ones
+            // apply only when we know the current bundle AND it matches. An unknown
+            // bundle is NOT a wildcard — injecting app-scoped preferences into the
+            // wrong app would apply them out of context.
+            if memory.bundleIds.isEmpty { return true }
+            guard let bundleId else { return false }
+            return memory.bundleIds.contains(bundleId)
+        }
+        return Array(activePreferences.prefix(3))
+    }
+
+    private func matchedRoutines(for transcript: String) -> [Memory] {
+        let bundleId = TeachingSkill.detectBundleId(in: transcript) ?? frontmostApplicationBundleId()
+        return AuxiliaryMemoryMatcher.matchRoutines(
+            from: auxiliaryMemoryStore.memories,
+            bundleId: bundleId,
+            transcript: transcript,
+            limit: 2
+        )
+    }
+
     private func recordSessionExchange(
         transcript: String,
         spokenResponse: String,
@@ -425,6 +460,19 @@ final class CompanionManager: ObservableObject {
         if wasEmptyBeforeAppend {
             sessionStartedAt = Date()
             didDraftSkillForCurrentSession = false
+            sessionContainsStatedPreference = false
+        }
+
+        if PreferenceSignalDetector.containsAnyPreferenceSignal(in: transcript) {
+            sessionContainsStatedPreference = true
+        }
+
+        // MemoryGate also distills a preference from repeated style corrections
+        // (e.g. two "make it shorter" turns), not just explicit preference phrases.
+        // Trip the fast-idle boundary for those sessions too so they save promptly
+        // instead of waiting the full default idle window.
+        if PreferenceSignalDetector.hasStyleCorrectionAcrossTurns(in: sessionTrace) {
+            sessionContainsStatedPreference = true
         }
 
         if sessionTrace.count > 20 {
@@ -451,7 +499,10 @@ final class CompanionManager: ObservableObject {
 
     private func restartSessionIdleTimer() {
         sessionIdleTimer?.invalidate()
-        let idleTimer = Timer(timeInterval: 30, repeats: false) { [weak self] _ in
+        let idleInterval = sessionContainsStatedPreference
+            ? Self.statedPreferenceSessionIdleInterval
+            : Self.defaultSessionIdleInterval
+        let idleTimer = Timer(timeInterval: idleInterval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 // If the assistant is still speaking when the timer fires, defer the
@@ -508,6 +559,7 @@ final class CompanionManager: ObservableObject {
             sessionTrace.removeAll()
             appliedSkillIDsInCurrentSession.removeAll()
             didDraftSkillForCurrentSession = false
+            sessionContainsStatedPreference = false
             // Per-session routine dismissals are scoped to a single voice session,
             // so clear them here and let any still-qualifying routine resurface
             // next session.
@@ -562,17 +614,28 @@ final class CompanionManager: ObservableObject {
         let skillGateReasons = decision.passedCategories[.skill] ?? []
         lastSkillWriteTrigger = skillGateReasons.first?.rawValue
 
+        let allGateReasons = decision.passedCategories.values.flatMap { $0 }.map(\.rawValue)
+
         ClickyAnalytics.trackMemoryGateDecision(
             sessionId: session.sessionId.uuidString,
             passedCategories: decision.passedCategories.keys.map(\.rawValue),
-            gateReasons: skillGateReasons.map(\.rawValue),
+            gateReasons: allGateReasons,
             blockReasons: decision.blockReasons.map(\.rawValue)
         )
 
-        guard decision.shouldDistillSkill else { return }
-        guard !didDraftSkillForCurrentSession else { return }
+        if decision.shouldDistillSkill, !didDraftSkillForCurrentSession {
+            distillSkill(from: session.turns, gateReasons: skillGateReasons)
+        }
 
-        distillSkill(from: session.turns, gateReasons: skillGateReasons)
+        if decision.shouldDistillPreference {
+            let preferenceGateReasons = decision.passedCategories[.preference] ?? []
+            distillPreference(from: session.turns, gateReasons: preferenceGateReasons)
+        }
+
+        if decision.shouldDistillRoutine {
+            let routineGateReasons = decision.passedCategories[.routine] ?? []
+            distillRoutine(from: session.turns, gateReasons: routineGateReasons)
+        }
     }
 
     private func maybeProactivelyDraftSkill() {
@@ -725,6 +788,163 @@ final class CompanionManager: ObservableObject {
                     skillSaveStatus = .failed
                     scheduleSkillSaveStatusClear()
                 }
+            }
+        }
+    }
+
+    private func distillPreference(
+        from turns: [SessionTraceEntry],
+        gateReasons: [GateReason]
+    ) {
+        let preferenceMatchText = PreferenceSignalDetector.preferenceMatchText(from: turns)
+        let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: turns)
+        let targetBundleId = isAppSpecific
+            ? SkillTargetAppResolver.resolveTargetBundleId(
+                from: turns,
+                frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
+            )
+            : nil
+
+        // Optimistic feedback: synthesis runs through Claude and can take several
+        // seconds, so acknowledge the save immediately and reconcile to the final
+        // "Saved/Updated" toast when the write completes.
+        let savingToastMessage = "Saving preference…"
+        memorySavedToastManager.showTransientMessage(savingToastMessage, hideAfter: 30)
+
+        // Serialize writes WITHOUT cancelling the predecessor. Cancelling would abort
+        // an in-flight write from a prior already-finalized session before it
+        // persisted, dropping that session's preference (skill distillation avoids
+        // cancellation for the same reason). Awaiting the predecessor also lets us
+        // recompute merge candidates AFTER it has saved, so the LLM judge sees what
+        // it just wrote and updates that memory instead of creating a duplicate.
+        let previousPreferenceWriteTask = preferenceWriteTask
+        preferenceWriteTask = Task {
+            _ = await previousPreferenceWriteTask?.value
+            guard !Task.isCancelled else { return }
+            do {
+                let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
+                    in: auxiliaryMemoryStore.memories,
+                    category: .preference,
+                    topic: preferenceMatchText,
+                    bundleId: targetBundleId
+                )
+
+                let synthesisResult = try await PreferenceSynthesizer.synthesizePreference(
+                    sessionTrace: turns,
+                    gateReasons: gateReasons,
+                    candidateMemories: candidateMemories,
+                    targetBundleId: targetBundleId,
+                    dedupTopic: preferenceMatchText,
+                    claudeAPI: claudeAPI
+                )
+
+                guard !Task.isCancelled else { return }
+
+                let memory = synthesisResult.memory
+                _ = try auxiliaryMemoryStore.save(memory)
+                syncTeachingSkillsFromStore()
+
+                ClickyAnalytics.trackMemorySaved(
+                    category: .preference,
+                    memoryID: memory.id,
+                    updatedExisting: synthesisResult.updatedExistingMemory
+                )
+
+                let toastMessage = synthesisResult.updatedExistingMemory
+                    ? "Updated a memory: \(memory.title)"
+                    : "Saved a new memory: \(memory.title)"
+                memorySavedToastManager.showTransientMessage(toastMessage, hideAfter: 6, onTap: { [weak self] in
+                    self?.memorySavedToastManager.hideOverlay()
+                    self?.requestOpenMemoriesLibrary(memoryID: memory.id)
+                })
+                writeE2EArtifactsIfNeeded()
+                print("📚 Saved preference memory: \(memory.id)")
+            } catch {
+                // Clear our optimistic toast so it doesn't linger — but only if it's
+                // still the one showing, so we don't dismiss a sibling skill save's
+                // success toast on this shared manager.
+                if !Task.isCancelled {
+                    memorySavedToastManager.hideOverlayIfShowing(savingToastMessage)
+                }
+                print("⚠️ Failed to synthesize preference memory: \(error)")
+            }
+        }
+    }
+
+    private func distillRoutine(
+        from turns: [SessionTraceEntry],
+        gateReasons: [GateReason]
+    ) {
+        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
+        let targetBundleId = SkillTargetAppResolver.resolveTargetBundleId(
+            from: turns,
+            frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
+        )
+
+        // Optimistic feedback: synthesis runs through Claude and can take several
+        // seconds, so acknowledge the save immediately and reconcile to the final
+        // "Saved/Updated" toast when the write completes.
+        let savingToastMessage = "Saving routine…"
+        memorySavedToastManager.showTransientMessage(savingToastMessage, hideAfter: 30)
+
+        // Serialize writes WITHOUT cancelling the predecessor. Cancelling would abort
+        // an in-flight write from a prior already-finalized session before it
+        // persisted, dropping that session's routine. Awaiting the predecessor also
+        // lets us recompute merge candidates AFTER it has saved, so the LLM judge
+        // sees what it just wrote and updates that routine instead of duplicating it.
+        let previousRoutineWriteTask = routineWriteTask
+        routineWriteTask = Task {
+            _ = await previousRoutineWriteTask?.value
+            guard !Task.isCancelled else { return }
+            do {
+                let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
+                    in: auxiliaryMemoryStore.memories,
+                    category: .routine,
+                    topic: topic,
+                    bundleId: targetBundleId
+                )
+
+                let synthesisResult = try await RoutineSynthesizer.synthesizeRoutine(
+                    sessionTrace: turns,
+                    gateReasons: gateReasons,
+                    candidateMemories: candidateMemories,
+                    targetBundleId: targetBundleId,
+                    claudeAPI: claudeAPI
+                )
+
+                guard !Task.isCancelled else { return }
+
+                let memory = synthesisResult.memory
+                _ = try auxiliaryMemoryStore.save(memory)
+                syncTeachingSkillsFromStore()
+                topicHistoryStore.recordTopic(
+                    topic: topic,
+                    bundleId: targetBundleId
+                )
+
+                ClickyAnalytics.trackMemorySaved(
+                    category: .routine,
+                    memoryID: memory.id,
+                    updatedExisting: synthesisResult.updatedExistingMemory
+                )
+
+                let toastMessage = synthesisResult.updatedExistingMemory
+                    ? "Updated a memory: \(memory.title)"
+                    : "Saved a new memory: \(memory.title)"
+                memorySavedToastManager.showTransientMessage(toastMessage, hideAfter: 6, onTap: { [weak self] in
+                    self?.memorySavedToastManager.hideOverlay()
+                    self?.requestOpenMemoriesLibrary(memoryID: memory.id)
+                })
+                writeE2EArtifactsIfNeeded()
+                print("📚 Saved routine memory: \(memory.id)")
+            } catch {
+                // Clear our optimistic toast so it doesn't linger — but only if it's
+                // still the one showing, so we don't dismiss a sibling skill save's
+                // success toast on this shared manager.
+                if !Task.isCancelled {
+                    memorySavedToastManager.hideOverlayIfShowing(savingToastMessage)
+                }
+                print("⚠️ Failed to synthesize routine memory: \(error)")
             }
         }
     }
@@ -1354,6 +1574,10 @@ final class CompanionManager: ObservableObject {
     }
 
     func start() {
+        if ClickyE2EConfiguration.shouldSkipSetup {
+            hasSubmittedEmail = ClickyDefaults.shared.bool(forKey: "hasSubmittedEmail")
+        }
+
         bootstrapTeachingSkills()
         bindPanelClosedObservation()
         bootstrapNicheDiscovery()
@@ -1475,17 +1699,26 @@ final class CompanionManager: ObservableObject {
 
     /// Called on app termination before `stop()` tears everything down. Persists
     /// an in-flight session (so MemoryGate runs) and waits — bounded — for any
-    /// pending skill synthesis to finish, so quitting right after "got it" does
-    /// not drop the session JSON or the skill write.
+    /// pending memory synthesis (skill, preference, routine) to finish, so
+    /// quitting right after "got it" or a "Saving…" toast does not drop the
+    /// session JSON or the in-flight Claude write.
     func finishPendingWorkBeforeTermination() async {
         finalizeAndPersistSession()
 
-        guard let pendingSkillWriteTask = skillWriteTask else { return }
+        // All three distillation paths run async Claude writes after finalize and
+        // must be drained, not just the skill write — preference/routine saves are
+        // now triggered on a short idle boundary and can be in flight at quit.
+        let pendingWriteTasks = [skillWriteTask, preferenceWriteTask, routineWriteTask].compactMap { $0 }
+        guard !pendingWriteTasks.isEmpty else { return }
 
         // Bound the wait so a slow or hung synthesis network call can never
         // block app termination indefinitely.
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { await pendingSkillWriteTask.value }
+            group.addTask {
+                for pendingWriteTask in pendingWriteTasks {
+                    await pendingWriteTask.value
+                }
+            }
             group.addTask { try? await Task.sleep(nanoseconds: 8_000_000_000) }
             _ = await group.next()
             group.cancelAll()
@@ -1507,6 +1740,10 @@ final class CompanionManager: ObservableObject {
         currentResponseTask = nil
         skillWriteTask?.cancel()
         skillWriteTask = nil
+        preferenceWriteTask?.cancel()
+        preferenceWriteTask = nil
+        routineWriteTask?.cancel()
+        routineWriteTask = nil
         sessionIdleTimer?.invalidate()
         sessionIdleTimer = nil
         if let panelClosedObserver {
@@ -1991,10 +2228,13 @@ final class CompanionManager: ObservableObject {
 
                     let matchedTeachingSkills = matchedSkills(for: transcript)
                     lastMatchedSkillNames = matchedTeachingSkills.map(\.name)
+                    let bundleId = TeachingSkill.detectBundleId(in: transcript) ?? frontmostApplicationBundleId()
                     let basePrompt = buildVoiceResponseSystemPrompt(suggestionTapContext: suggestionTapContext)
                     let systemPrompt = TeachingPromptBuilder.buildVoiceResponsePrompt(
                         basePrompt: basePrompt,
-                        matchedSkills: matchedTeachingSkills
+                        matchedSkills: matchedTeachingSkills,
+                        activePreferences: activePreferences(bundleId: bundleId),
+                        matchedRoutines: matchedRoutines(for: transcript)
                     )
                     lastSystemPrompt = systemPrompt
                     ClickyE2EConfiguration.writeLastSystemPromptForE2E(systemPrompt)

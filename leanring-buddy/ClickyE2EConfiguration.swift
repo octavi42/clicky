@@ -12,6 +12,12 @@ enum ClickyE2EConfiguration {
         ProcessInfo.processInfo.arguments.contains("-CLICKY_E2E=1")
     }
 
+    /// Skips onboarding/email setup UI. Enabled for E2E runs and via
+    /// `-CLICKY_SKIP_SETUP=1` for isolated worktree dev builds.
+    static var shouldSkipSetup: Bool {
+        isEnabled || ProcessInfo.processInfo.arguments.contains("-CLICKY_SKIP_SETUP=1")
+    }
+
     static var shouldIncludeNicheFlow: Bool {
         ProcessInfo.processInfo.arguments.contains("-CLICKY_E2E_INCLUDE_NICHE=1")
     }
@@ -106,7 +112,7 @@ enum ClickyE2EConfiguration {
     }
 
     static func applyLaunchOverrides() {
-        guard isEnabled else { return }
+        guard shouldSkipSetup else { return }
 
         ClickyDefaults.shared.set(true, forKey: "hasCompletedOnboarding")
         ClickyDefaults.shared.set(true, forKey: "hasSubmittedEmail")

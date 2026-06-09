@@ -3,7 +3,7 @@
 //  leanring-buddy
 //
 //  Category-aware memory model for the unified memories UI. Skills map in
-//  today; preference and routine adapters will plug in when generators land.
+//  from TeachingSkill; preferences and routines are stored via AuxiliaryMemoryStore.
 //
 
 import Foundation

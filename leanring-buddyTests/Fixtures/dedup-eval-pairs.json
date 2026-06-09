@@ -1,0 +1,576 @@
+{
+  "pairs": [
+    {
+      "id": "duplicate-short-answers",
+      "newTopic": "keep answers short",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "paraphrase-one-sentence-answers",
+      "newTopic": "from now on keep the answers in one sentence",
+      "existingMemory": {
+        "title": "keep answers short",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "paraphrase-give-detailed-answers",
+      "newTopic": "give detailed answers with examples",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "paraphrase-short-answers",
+      "newTopic": "be concise in responses",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "paraphrase-keyboard-shortcuts",
+      "newTopic": "prefer keyboard shortcuts over clicking menus",
+      "existingMemory": {
+        "title": "keyboard first",
+        "summary": "use keyboard shortcuts instead of menus",
+        "body": "always suggest keyboard shortcuts before pointing at menu items"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-keyboard-shortcuts",
+      "newTopic": "use keyboard shortcuts instead of menus",
+      "existingMemory": {
+        "title": "keyboard first",
+        "summary": "use keyboard shortcuts instead of menus",
+        "body": "always suggest keyboard shortcuts before pointing at menu items"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-dark-mode",
+      "newTopic": "always use dark mode in developer tools",
+      "existingMemory": {
+        "title": "dark mode in dev tools",
+        "summary": "prefer dark mode when working in developer tools",
+        "body": "assume dark mode is enabled in browser devtools and ide panels"
+      },
+      "bundleId": "com.google.Chrome",
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-step-by-step",
+      "newTopic": "explain things step by step",
+      "existingMemory": {
+        "title": "step by step",
+        "summary": "break explanations into numbered steps",
+        "body": "walk through tasks one step at a time with clear ordering"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-no-jargon",
+      "newTopic": "avoid technical jargon",
+      "existingMemory": {
+        "title": "plain language",
+        "summary": "avoid technical jargon in explanations",
+        "body": "use simple words and define terms when they are unavoidable"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-confirm-before-action",
+      "newTopic": "ask before making destructive changes",
+      "existingMemory": {
+        "title": "confirm destructive actions",
+        "summary": "ask before suggesting destructive changes",
+        "body": "always confirm before delete, overwrite, or irreversible operations"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-typescript",
+      "newTopic": "prefer typescript over javascript",
+      "existingMemory": {
+        "title": "typescript first",
+        "summary": "prefer typescript examples over javascript",
+        "body": "default to typescript syntax in code examples"
+      },
+      "bundleId": "com.microsoft.VSCode",
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-morning-standup",
+      "newTopic": "morning standup prep workflow",
+      "existingMemory": {
+        "title": "morning standup prep",
+        "summary": "recurring morning standup preparation routine",
+        "body": "open slack, review yesterday tickets, draft standup notes"
+      },
+      "bundleId": "com.tinyspeck.slackmacgap",
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "opposite-answers-length",
+      "newTopic": "give detailed answers with examples",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-answers-shared-word",
+      "newTopic": "expand on answers with context",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-keyboard-vs-mouse",
+      "newTopic": "prefer clicking through menus visually",
+      "existingMemory": {
+        "title": "keyboard first",
+        "summary": "use keyboard shortcuts instead of menus",
+        "body": "always suggest keyboard shortcuts before pointing at menu items"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-dark-vs-light",
+      "newTopic": "always use light mode in developer tools",
+      "existingMemory": {
+        "title": "dark mode in dev tools",
+        "summary": "prefer dark mode when working in developer tools",
+        "body": "assume dark mode is enabled in browser devtools and ide panels"
+      },
+      "bundleId": "com.google.Chrome",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-typescript-vs-javascript",
+      "newTopic": "prefer javascript over typescript",
+      "existingMemory": {
+        "title": "typescript first",
+        "summary": "prefer typescript examples over javascript",
+        "body": "default to typescript syntax in code examples"
+      },
+      "bundleId": "com.microsoft.VSCode",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-confirm-vs-auto",
+      "newTopic": "just do it without asking for confirmation",
+      "existingMemory": {
+        "title": "confirm destructive actions",
+        "summary": "ask before suggesting destructive changes",
+        "body": "always confirm before delete, overwrite, or irreversible operations"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-jargon-vs-technical",
+      "newTopic": "use technical terminology freely",
+      "existingMemory": {
+        "title": "plain language",
+        "summary": "avoid technical jargon in explanations",
+        "body": "use simple words and define terms when they are unavoidable"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "opposite-step-by-step-vs-quick",
+      "newTopic": "give quick one-line answers only",
+      "existingMemory": {
+        "title": "step by step",
+        "summary": "break explanations into numbered steps",
+        "body": "walk through tasks one step at a time with clear ordering"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "related-but-distinct-tone",
+      "newTopic": "be friendly and casual in tone",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "related-but-distinct-format",
+      "newTopic": "use bullet points in responses",
+      "existingMemory": {
+        "title": "step by step",
+        "summary": "break explanations into numbered steps",
+        "body": "walk through tasks one step at a time with clear ordering"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "related-but-distinct-code-style",
+      "newTopic": "prefer functional programming patterns",
+      "existingMemory": {
+        "title": "typescript first",
+        "summary": "prefer typescript examples over javascript",
+        "body": "default to typescript syntax in code examples"
+      },
+      "bundleId": "com.microsoft.VSCode",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "unrelated-export-vs-answers",
+      "newTopic": "export video to youtube weekly",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "unrelated-invoice-vs-keyboard",
+      "newTopic": "process invoices every monday",
+      "existingMemory": {
+        "title": "keyboard first",
+        "summary": "use keyboard shortcuts instead of menus",
+        "body": "always suggest keyboard shortcuts before pointing at menu items"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "unrelated-meeting-vs-dark-mode",
+      "newTopic": "schedule team meetings on fridays",
+      "existingMemory": {
+        "title": "dark mode in dev tools",
+        "summary": "prefer dark mode when working in developer tools",
+        "body": "assume dark mode is enabled in browser devtools and ide panels"
+      },
+      "bundleId": "com.google.Chrome",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "unrelated-backup-vs-standup",
+      "newTopic": "backup database every night",
+      "existingMemory": {
+        "title": "morning standup prep",
+        "summary": "recurring morning standup preparation routine",
+        "body": "open slack, review yesterday tickets, draft standup notes"
+      },
+      "bundleId": "com.tinyspeck.slackmacgap",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "scope-app-specific-vs-agnostic-short",
+      "newTopic": "keep answers short in xcode",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": "com.apple.dt.Xcode",
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "scope-different-apps-typescript",
+      "newTopic": "prefer typescript in xcode",
+      "existingMemory": {
+        "title": "typescript first",
+        "summary": "prefer typescript examples over javascript",
+        "body": "default to typescript syntax in code examples"
+      },
+      "bundleId": "com.apple.dt.Xcode",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "scope-chrome-vs-vscode-dark",
+      "newTopic": "use dark mode in vscode",
+      "existingMemory": {
+        "title": "dark mode in dev tools",
+        "summary": "prefer dark mode when working in developer tools",
+        "body": "assume dark mode is enabled in browser devtools and ide panels"
+      },
+      "bundleId": "com.microsoft.VSCode",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "routine-duplicate-weekly-export",
+      "newTopic": "weekly youtube export workflow",
+      "existingMemory": {
+        "title": "weekly youtube export",
+        "summary": "export and upload videos every week",
+        "body": "export final cut project, upload to youtube, add title and tags"
+      },
+      "bundleId": "com.apple.FinalCut",
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "routine-separate-daily-export",
+      "newTopic": "daily social media posting routine",
+      "existingMemory": {
+        "title": "weekly youtube export",
+        "summary": "export and upload videos every week",
+        "body": "export final cut project, upload to youtube, add title and tags"
+      },
+      "bundleId": "com.apple.FinalCut",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "routine-opposite-frequency",
+      "newTopic": "monthly report generation workflow",
+      "existingMemory": {
+        "title": "weekly youtube export",
+        "summary": "export and upload videos every week",
+        "body": "export final cut project, upload to youtube, add title and tags"
+      },
+      "bundleId": "com.apple.FinalCut",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "duplicate-skip-intro",
+      "newTopic": "skip long introductions",
+      "existingMemory": {
+        "title": "no intros",
+        "summary": "skip long introductions in answers",
+        "body": "get straight to the point without preamble"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "duplicate-show-code-first",
+      "newTopic": "show code examples before explaining",
+      "existingMemory": {
+        "title": "code first",
+        "summary": "show code examples before explaining concepts",
+        "body": "lead with a code snippet then explain what it does"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "opposite-explain-before-code",
+      "newTopic": "explain concepts before showing any code",
+      "existingMemory": {
+        "title": "code first",
+        "summary": "show code examples before explaining concepts",
+        "body": "lead with a code snippet then explain what it does"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "paraphrase-no-intros",
+      "newTopic": "get to the point quickly",
+      "existingMemory": {
+        "title": "no intros",
+        "summary": "skip long introductions in answers",
+        "body": "get straight to the point without preamble"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "related-metrics-vs-short",
+      "newTopic": "include performance metrics in answers",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "related-humor-vs-keyboard",
+      "newTopic": "use humor in explanations",
+      "existingMemory": {
+        "title": "keyboard first",
+        "summary": "use keyboard shortcuts instead of menus",
+        "body": "always suggest keyboard shortcuts before pointing at menu items"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "duplicate-rust-over-go",
+      "newTopic": "prefer rust over go for systems code",
+      "existingMemory": {
+        "title": "rust for systems",
+        "summary": "prefer rust over go for systems programming",
+        "body": "suggest rust examples when discussing systems programming"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "opposite-go-over-rust",
+      "newTopic": "prefer go over rust for systems code",
+      "existingMemory": {
+        "title": "rust for systems",
+        "summary": "prefer rust over go for systems programming",
+        "body": "suggest rust examples when discussing systems programming"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "unrelated-pets-vs-code-first",
+      "newTopic": "feed the cat at 6pm daily",
+      "existingMemory": {
+        "title": "code first",
+        "summary": "show code examples before explaining concepts",
+        "body": "lead with a code snippet then explain what it does"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "duplicate-slow-explanations",
+      "newTopic": "explain slowly for beginners",
+      "existingMemory": {
+        "title": "beginner pace",
+        "summary": "explain slowly for beginners",
+        "body": "use simple terms and pause between steps for new users"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "opposite-fast-for-experts",
+      "newTopic": "assume expert level and move fast",
+      "existingMemory": {
+        "title": "beginner pace",
+        "summary": "explain slowly for beginners",
+        "body": "use simple terms and pause between steps for new users"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "scope-slack-standup-same-app",
+      "newTopic": "prepare standup notes in slack",
+      "existingMemory": {
+        "title": "morning standup prep",
+        "summary": "recurring morning standup preparation routine",
+        "body": "open slack, review yesterday tickets, draft standup notes"
+      },
+      "bundleId": "com.tinyspeck.slackmacgap",
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "scope-standup-different-app",
+      "newTopic": "prepare standup notes in notion",
+      "existingMemory": {
+        "title": "morning standup prep",
+        "summary": "recurring morning standup preparation routine",
+        "body": "open slack, review yesterday tickets, draft standup notes"
+      },
+      "bundleId": "notion.id",
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "duplicate-use-imperial-units",
+      "newTopic": "use imperial units in measurements",
+      "existingMemory": {
+        "title": "imperial units",
+        "summary": "use imperial units for measurements",
+        "body": "default to feet, inches, and fahrenheit"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "opposite-metric-units",
+      "newTopic": "use metric units in measurements",
+      "existingMemory": {
+        "title": "imperial units",
+        "summary": "use imperial units for measurements",
+        "body": "default to feet, inches, and fahrenheit"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "paraphrase-imperial-units",
+      "newTopic": "prefer feet and fahrenheit",
+      "existingMemory": {
+        "title": "imperial units",
+        "summary": "use imperial units for measurements",
+        "body": "default to feet, inches, and fahrenheit"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "related-verbosity-vs-no-intros",
+      "newTopic": "be verbose and thorough in explanations",
+      "existingMemory": {
+        "title": "no intros",
+        "summary": "skip long introductions in answers",
+        "body": "get straight to the point without preamble"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
+      "id": "duplicate-point-at-ui",
+      "newTopic": "point at ui elements when explaining",
+      "existingMemory": {
+        "title": "visual pointing",
+        "summary": "point at ui elements when explaining",
+        "body": "use the cursor overlay to highlight buttons and menus"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "opposite-no-pointing",
+      "newTopic": "describe ui elements without pointing",
+      "existingMemory": {
+        "title": "visual pointing",
+        "summary": "point at ui elements when explaining",
+        "body": "use the cursor overlay to highlight buttons and menus"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    }
+  ]
+}

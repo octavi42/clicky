@@ -104,6 +104,55 @@ final class TeachingTopicHistoryStore {
         return matchingEntries.count >= 2
     }
 
+    /// True when the same topic appears on at least `minDistinctDays` separate
+    /// calendar days within the lookback window. Used for routine detection.
+    static func hasRecurringTopicAcrossDays(
+        topic: String,
+        bundleId: String?,
+        minDistinctDays: Int = 2,
+        withinDays: Int = 7,
+        in entries: [TeachingTopicHistoryEntry],
+        now: Date = Date()
+    ) -> Bool {
+        let topicTokens = Set(SkillMatcher.meaningfulTokens(topic))
+        guard topicTokens.count >= 1 else { return false }
+
+        let requiredOverlap = min(2, topicTokens.count)
+        let cutoff = Calendar.current.date(byAdding: .day, value: -withinDays, to: now) ?? .distantPast
+        let calendar = Calendar.current
+
+        let matchingEntries = entries.filter { entry in
+            entry.timestamp >= cutoff &&
+            bundleIdsMatch(entry.bundleId, bundleId) &&
+            tokenOverlapCount(Set(entry.topicTokens), topicTokens) >= requiredOverlap
+        }
+
+        let distinctDays = Set(
+            matchingEntries.map { entry in
+                calendar.startOfDay(for: entry.timestamp)
+            }
+        )
+
+        return distinctDays.count >= minDistinctDays
+    }
+
+    func hasRecurringTopicAcrossDays(
+        topic: String,
+        bundleId: String?,
+        minDistinctDays: Int = 2,
+        withinDays: Int = 7,
+        now: Date = Date()
+    ) -> Bool {
+        Self.hasRecurringTopicAcrossDays(
+            topic: topic,
+            bundleId: bundleId,
+            minDistinctDays: minDistinctDays,
+            withinDays: withinDays,
+            in: entries,
+            now: now
+        )
+    }
+
     private static func bundleIdsMatch(_ lhs: String?, _ rhs: String?) -> Bool {
         switch (lhs, rhs) {
         case (nil, nil):
