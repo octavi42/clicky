@@ -10,8 +10,12 @@ import Foundation
 struct TransitionEdge: Codable, Equatable, Identifiable {
     let fromBundleId: String
     let toBundleId: String
-    var count: Int
-    var occurrenceDays: [String]
+    /// Transition counts keyed by calendar day (yyyy-MM-dd). Storing per-day
+    /// counts (instead of a single lifetime total) lets pruning drop days that
+    /// fall outside the rolling window so `count` and `distinctDayCount` always
+    /// reflect only in-window activity. Otherwise old transitions keep inflating
+    /// the strength ranking long after they stop happening.
+    var transitionCountsByDay: [String: Int]
     var firstSeen: Date
     var lastSeen: Date
 
@@ -19,8 +23,60 @@ struct TransitionEdge: Codable, Equatable, Identifiable {
         Self.edgeIdentifier(fromBundleId: fromBundleId, toBundleId: toBundleId)
     }
 
+    /// Total in-window transitions across all retained days.
+    var count: Int {
+        transitionCountsByDay.values.reduce(0, +)
+    }
+
+    var occurrenceDays: [String] {
+        transitionCountsByDay.keys.sorted()
+    }
+
     var distinctDayCount: Int {
-        occurrenceDays.count
+        transitionCountsByDay.count
+    }
+
+    init(
+        fromBundleId: String,
+        toBundleId: String,
+        transitionCountsByDay: [String: Int],
+        firstSeen: Date,
+        lastSeen: Date
+    ) {
+        self.fromBundleId = fromBundleId
+        self.toBundleId = toBundleId
+        self.transitionCountsByDay = transitionCountsByDay
+        self.firstSeen = firstSeen
+        self.lastSeen = lastSeen
+    }
+
+    /// Convenience initializer that distributes a total `count` across the given
+    /// `occurrenceDays` (used by tests and any callers thinking in totals).
+    init(
+        fromBundleId: String,
+        toBundleId: String,
+        count: Int,
+        occurrenceDays: [String],
+        firstSeen: Date,
+        lastSeen: Date
+    ) {
+        var countsByDay: [String: Int] = [:]
+        let sortedDays = occurrenceDays.sorted()
+        if !sortedDays.isEmpty {
+            let baseCountPerDay = count / sortedDays.count
+            let remainderToFrontload = count % sortedDays.count
+            for (dayIndex, day) in sortedDays.enumerated() {
+                countsByDay[day] = baseCountPerDay + (dayIndex < remainderToFrontload ? 1 : 0)
+            }
+        }
+
+        self.init(
+            fromBundleId: fromBundleId,
+            toBundleId: toBundleId,
+            transitionCountsByDay: countsByDay,
+            firstSeen: firstSeen,
+            lastSeen: lastSeen
+        )
     }
 
     static func edgeIdentifier(fromBundleId: String, toBundleId: String) -> String {
@@ -90,19 +146,14 @@ final class ActivityStore {
         let edgeId = TransitionEdge.edgeIdentifier(fromBundleId: fromBundleId, toBundleId: toBundleId)
 
         if let index = edges.firstIndex(where: { $0.id == edgeId }) {
-            edges[index].count += 1
+            edges[index].transitionCountsByDay[dayString, default: 0] += 1
             edges[index].lastSeen = timestamp
-            if !edges[index].occurrenceDays.contains(dayString) {
-                edges[index].occurrenceDays.append(dayString)
-                edges[index].occurrenceDays.sort()
-            }
         } else {
             edges.append(
                 TransitionEdge(
                     fromBundleId: fromBundleId,
                     toBundleId: toBundleId,
-                    count: 1,
-                    occurrenceDays: [dayString],
+                    transitionCountsByDay: [dayString: 1],
                     firstSeen: timestamp,
                     lastSeen: timestamp
                 )
@@ -127,8 +178,10 @@ final class ActivityStore {
 
         edges = edges.compactMap { edge in
             var prunedEdge = edge
-            prunedEdge.occurrenceDays = prunedEdge.occurrenceDays.filter { $0 >= cutoffDayString }
-            guard !prunedEdge.occurrenceDays.isEmpty else { return nil }
+            prunedEdge.transitionCountsByDay = prunedEdge.transitionCountsByDay.filter { day, _ in
+                day >= cutoffDayString
+            }
+            guard !prunedEdge.transitionCountsByDay.isEmpty else { return nil }
             return prunedEdge
         }
     }

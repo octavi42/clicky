@@ -65,18 +65,14 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "-CLICKY_DEFAULTS_SUITE=clicky-routine-suggestions"
-            isEnabled = "YES">
-         </CommandLineArgument>
-         <CommandLineArgument
-            argument = "-CLICKY_DISABLE_GLOBAL_PTT=1"
+            argument = "-CLICKY_DEFAULTS_SUITE=clicky-session-persistence"
             isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "CLICKY_HOME"
-            value = "/tmp/clicky-routine-suggestions"
+            value = "/tmp/clicky-session-persistence"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

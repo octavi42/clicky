@@ -504,6 +504,13 @@ final class CompanionManager: ObservableObject {
             sessionTrace.removeAll()
             appliedSkillIDsInCurrentSession.removeAll()
             didDraftSkillForCurrentSession = false
+            // Per-session routine dismissals are scoped to a single voice session,
+            // so clear them here (matching the `permanent: false` dismiss analytics)
+            // and let any still-qualifying routine resurface next session.
+            if !sessionDismissedRoutineSuggestionIDs.isEmpty {
+                sessionDismissedRoutineSuggestionIDs.removeAll()
+                refreshRoutineSuggestions()
+            }
         } catch {
             // Keep the trace and re-arm the idle timer so a transient I/O error
             // gets another chance to persist instead of silently losing the capture.
