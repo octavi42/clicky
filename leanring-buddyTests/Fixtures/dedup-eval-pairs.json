@@ -12,6 +12,28 @@
       "expectedDecision": "merge"
     },
     {
+      "id": "paraphrase-one-sentence-answers",
+      "newTopic": "from now on keep the answers in one sentence",
+      "existingMemory": {
+        "title": "keep answers short",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "merge"
+    },
+    {
+      "id": "paraphrase-give-detailed-answers",
+      "newTopic": "give detailed answers with examples",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "expectedDecision": "separate"
+    },
+    {
       "id": "paraphrase-short-answers",
       "newTopic": "be concise in responses",
       "existingMemory": {

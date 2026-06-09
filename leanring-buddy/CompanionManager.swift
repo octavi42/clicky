@@ -745,7 +745,7 @@ final class CompanionManager: ObservableObject {
         from turns: [SessionTraceEntry],
         gateReasons: [GateReason]
     ) {
-        let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
+        let preferenceMatchText = PreferenceSignalDetector.preferenceMatchText(from: turns)
         let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: turns)
         let targetBundleId = isAppSpecific
             ? SkillTargetAppResolver.resolveTargetBundleId(
@@ -759,7 +759,7 @@ final class CompanionManager: ObservableObject {
                 let existingMemory = AuxiliaryMemoryMatcher.findMemoryForUpdate(
                     in: auxiliaryMemoryStore.memories,
                     category: .preference,
-                    topic: topic,
+                    topic: preferenceMatchText,
                     bundleId: targetBundleId
                 )
 

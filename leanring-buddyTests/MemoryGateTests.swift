@@ -615,6 +615,88 @@ struct MemoryGateTests {
         #expect(decision.blockReasons == [.learningDisabled])
     }
 
+    @Test func passesPreferenceOnImplicitInstruction() {
+        let session = makeSession(turns: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "give detailed answers with examples",
+                assistantResponse: "got it, i'll include examples",
+                bundleId: nil,
+                pointed: false
+            )
+        ])
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: [],
+            isLearningEnabled: true
+        )
+
+        #expect(decision.shouldDistillPreference)
+        #expect(decision.passedCategories[.preference]?.contains(.statedPreference) == true)
+        #expect(!decision.shouldDistillSkill)
+        #expect(decision.blockReasons.isEmpty)
+    }
+
+    @Test func doesNotPassPreferenceOnScreenQuestion() {
+        let session = makeSession(turns: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i save this document?",
+                assistantResponse: "click file then save",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            )
+        ])
+
+        let decision = MemoryGate.evaluate(
+            session: session,
+            topicHistory: [],
+            isLearningEnabled: true
+        )
+
+        #expect(!decision.shouldDistillPreference)
+    }
+
+    @Test func preferenceSignalDetectorFindsImplicitPreference() {
+        #expect(PreferenceSignalDetector.hasStatedPreference(in: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "give detailed answers with examples",
+                assistantResponse: "ok",
+                bundleId: nil,
+                pointed: false
+            )
+        ]))
+        #expect(PreferenceSignalDetector.primaryPreferenceTranscript(in: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "from now on keep the answers in one sentence",
+                assistantResponse: "ok",
+                bundleId: nil,
+                pointed: false
+            )
+        ]) == "from now on keep the answers in one sentence")
+        #expect(!PreferenceSignalDetector.hasStatedPreference(in: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "how do i save this?",
+                assistantResponse: "click file",
+                bundleId: nil,
+                pointed: true
+            )
+        ]))
+        #expect(!PreferenceSignalDetector.hasStatedPreference(in: [
+            SessionTraceEntry(
+                timestamp: Date(),
+                userTranscript: "show me the save button",
+                assistantResponse: "it's in the toolbar",
+                bundleId: "com.apple.TextEdit",
+                pointed: true
+            )
+        ]))
+    }
+
     @Test func preferenceSignalDetectorFindsStatedPreference() {
         #expect(PreferenceSignalDetector.hasStatedPreference(in: [
             SessionTraceEntry(

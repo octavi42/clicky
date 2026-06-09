@@ -214,7 +214,7 @@ struct MemoryDedupEvalTests {
             print("Dedup eval lexical best: none met precision bar")
         }
 
-        print("Dedup eval production hybrid: lexicalThreshold=\(MemoryDedupConfiguration.lexicalMergeThreshold), appleThreshold=\(MemoryDedupConfiguration.appleMergeThreshold), appleLexicalFloor=\(MemoryDedupConfiguration.appleMergeLexicalFloor), precision=\(productionMetrics.precision), recall=\(productionMetrics.recall), f0.5=\(productionMetrics.f05Score), falseMerges=\(productionMetrics.falseMergeCount)")
+        print("Dedup eval production hybrid: lexicalThreshold=\(MemoryDedupConfiguration.lexicalMergeThreshold), appleThreshold=\(MemoryDedupConfiguration.appleMergeThreshold), sameAxisAppleThreshold=\(MemoryDedupConfiguration.sameAxisParaphraseAppleThreshold), appleLexicalFloor=\(MemoryDedupConfiguration.appleMergeLexicalFloor), precision=\(productionMetrics.precision), recall=\(productionMetrics.recall), f0.5=\(productionMetrics.f05Score), falseMerges=\(productionMetrics.falseMergeCount)")
 
         #expect(productionMetrics.precision >= 0.90)
         #expect(productionMetrics.falseMergeCount <= 2)
@@ -249,6 +249,23 @@ struct MemoryDedupEvalTests {
         }
     }
 
+    @Test @MainActor func mergesParaphrasePreferences() throws {
+        let pairs = try loadEvalPairs()
+
+        let paraphrasePairIDs = [
+            "paraphrase-one-sentence-answers"
+        ]
+
+        for pair in pairs where paraphrasePairIDs.contains(pair.id) {
+            let decision = predictedDecision(
+                for: pair,
+                scorerKind: MemoryDedupConfiguration.productionScorerKind,
+                mergeThreshold: MemoryDedupConfiguration.mergeThreshold
+            )
+            #expect(decision == "merge", "Expected \(pair.id) to merge, got \(decision)")
+        }
+    }
+
     @Test func preferenceConflictDetectorBlocksReversedPreferOverPairs() {
         #expect(
             PreferenceConflictDetector.hasConflict(
@@ -264,18 +281,45 @@ struct MemoryDedupEvalTests {
         )
         #expect(
             PreferenceConflictDetector.hasConflict(
+                between: "just do it without asking for confirmation",
+                and: "ask before suggesting destructive changes"
+            )
+        )
+        #expect(
+            PreferenceConflictDetector.hasConflict(
+                between: "explain concepts before showing any code",
+                and: "show code examples before explaining concepts"
+            )
+        )
+        #expect(
+            PreferenceSameAxisMatcher.isSameAnswerLengthPreferenceAxis(
+                between: "from now on keep the answers in one sentence",
+                and: "keep answers short. keep answers brief and concise"
+            )
+        )
+        #expect(
+            !PreferenceConflictDetector.hasConflict(
                 between: "keep answers short",
-                and: "give detailed answers with examples"
+                and: "keep answers brief and concise"
             )
         )
     }
 
-    @Test @MainActor func oldSingleTokenOverlapWouldHaveFalseMerged() throws {
+    @Test func oldSingleTokenOverlapWouldHaveFalseMerged() throws {
         let pairs = try loadEvalPairs()
 
         let falseMergeCount = pairs.filter { pair in
-            pair.expectedDecision == "separate" &&
-            predictedDecision(for: pair, scorerKind: .lexicalDice, mergeThreshold: 0.01) == "merge"
+            guard pair.expectedDecision == "separate" else { return false }
+
+            let existingText = [
+                pair.existingMemory.title,
+                pair.existingMemory.summary,
+                pair.existingMemory.body
+            ].joined(separator: ". ")
+
+            let topicTokens = Set(SkillMatcher.meaningfulTokens(pair.newTopic))
+            let memoryTokens = Set(SkillMatcher.meaningfulTokens(existingText))
+            return topicTokens.intersection(memoryTokens).count >= 1
         }.count
 
         #expect(falseMergeCount >= 5, "Fixture should include cases where old overlap behavior was unsafe")

@@ -14,6 +14,9 @@ enum MemoryDedupConfiguration {
     static let appleMergeThreshold: Double = 0.93
     /// Apple embeddings have a high unrelated baseline, so require some lexical overlap too.
     static let appleMergeLexicalFloor: Double = 0.18
+    /// Same-axis paraphrase merge for answer-length prefs (e.g. short vs one sentence).
+    static let sameAxisParaphraseLexicalFloor: Double = 0.30
+    static let sameAxisParaphraseAppleThreshold: Double = 0.80
 
     static var mergeThreshold: Double {
         lexicalMergeThreshold
@@ -201,7 +204,16 @@ enum AuxiliaryMemoryMatcher {
             let passesLexicalGate = lexicalScore >= MemoryDedupConfiguration.lexicalMergeThreshold
             let passesAppleGate = appleScore >= MemoryDedupConfiguration.appleMergeThreshold &&
                 lexicalScore >= MemoryDedupConfiguration.appleMergeLexicalFloor
-            return passesLexicalGate || passesAppleGate
+            let passesSameAxisParaphraseGate =
+                PreferenceSameAxisMatcher.isSameAnswerLengthPreferenceAxis(
+                    between: newTopic,
+                    and: existingText
+                ) &&
+                (
+                    lexicalScore >= MemoryDedupConfiguration.sameAxisParaphraseLexicalFloor ||
+                    appleScore >= MemoryDedupConfiguration.sameAxisParaphraseAppleThreshold
+                )
+            return passesLexicalGate || passesAppleGate || passesSameAxisParaphraseGate
         }
 
         return bestScore >= mergeThreshold
