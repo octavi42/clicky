@@ -131,7 +131,7 @@ enum PreferenceSynthesizer {
             title: parsed.title.isEmpty ? (existingMemory?.title ?? "User preference") : parsed.title,
             summary: parsed.summary.isEmpty ? (existingMemory?.summary ?? "") : parsed.summary,
             body: parsed.body.isEmpty ? (existingMemory?.body ?? response.text) : parsed.body,
-            bundleIds: bundleIds.isEmpty ? (existingMemory?.bundleIds ?? []) : bundleIds,
+            bundleIds: bundleIds,
             status: .active,
             isPinned: existingMemory?.isPinned ?? false,
             usageCount: existingMemory?.usageCount ?? 0,

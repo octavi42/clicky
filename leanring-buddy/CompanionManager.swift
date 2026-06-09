@@ -406,8 +406,14 @@ final class CompanionManager: ObservableObject {
 
     private func activePreferences(bundleId: String?) -> [Memory] {
         let activePreferences = auxiliaryMemoryStore.memories(for: .preference).filter { memory in
-            memory.status == .active &&
-            (memory.bundleIds.isEmpty || bundleId == nil || memory.bundleIds.contains(bundleId!))
+            guard memory.status == .active else { return false }
+            // App-agnostic preferences (no bundleIds) always apply. App-scoped ones
+            // apply only when we know the current bundle AND it matches. An unknown
+            // bundle is NOT a wildcard — injecting app-scoped preferences into the
+            // wrong app would apply them out of context.
+            if memory.bundleIds.isEmpty { return true }
+            guard let bundleId else { return false }
+            return memory.bundleIds.contains(bundleId)
         }
         return Array(activePreferences.prefix(3))
     }
