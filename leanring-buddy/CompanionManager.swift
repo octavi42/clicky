@@ -449,6 +449,14 @@ final class CompanionManager: ObservableObject {
             sessionContainsStatedPreference = true
         }
 
+        // MemoryGate also distills a preference from repeated style corrections
+        // (e.g. two "make it shorter" turns), not just explicit preference phrases.
+        // Trip the fast-idle boundary for those sessions too so they save promptly
+        // instead of waiting the full default idle window.
+        if PreferenceSignalDetector.hasStyleCorrectionAcrossTurns(in: sessionTrace) {
+            sessionContainsStatedPreference = true
+        }
+
         if sessionTrace.count > 20 {
             sessionTrace.removeFirst(sessionTrace.count - 20)
         }
@@ -772,27 +780,29 @@ final class CompanionManager: ObservableObject {
             )
             : nil
 
-        let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
-            in: auxiliaryMemoryStore.memories,
-            category: .preference,
-            topic: preferenceMatchText,
-            bundleId: targetBundleId
-        )
-
         // Optimistic feedback: synthesis runs through Claude and can take several
         // seconds, so acknowledge the save immediately and reconcile to the final
         // "Saved/Updated" toast when the write completes.
         memorySavedToastManager.showTransientMessage("Saving preference…", hideAfter: 30)
 
-        // Serialize writes: cancel any in-flight preference synthesis and have the
-        // new task wait for it to settle before saving. Otherwise two sessions
-        // finalizing in quick succession can race on `auxiliaryMemoryStore.save`,
-        // letting an older session's write clobber the newer preference.
+        // Serialize writes WITHOUT cancelling the predecessor. Cancelling would abort
+        // an in-flight write from a prior already-finalized session before it
+        // persisted, dropping that session's preference (skill distillation avoids
+        // cancellation for the same reason). Awaiting the predecessor also lets us
+        // recompute merge candidates AFTER it has saved, so the LLM judge sees what
+        // it just wrote and updates that memory instead of creating a duplicate.
         let previousPreferenceWriteTask = preferenceWriteTask
-        previousPreferenceWriteTask?.cancel()
         preferenceWriteTask = Task {
             _ = await previousPreferenceWriteTask?.value
+            guard !Task.isCancelled else { return }
             do {
+                let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
+                    in: auxiliaryMemoryStore.memories,
+                    category: .preference,
+                    topic: preferenceMatchText,
+                    bundleId: targetBundleId
+                )
+
                 let synthesisResult = try await PreferenceSynthesizer.synthesizePreference(
                     sessionTrace: turns,
                     gateReasons: gateReasons,
@@ -843,26 +853,28 @@ final class CompanionManager: ObservableObject {
             frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
         )
 
-        let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
-            in: auxiliaryMemoryStore.memories,
-            category: .routine,
-            topic: topic,
-            bundleId: targetBundleId
-        )
-
         // Optimistic feedback: synthesis runs through Claude and can take several
         // seconds, so acknowledge the save immediately and reconcile to the final
         // "Saved/Updated" toast when the write completes.
         memorySavedToastManager.showTransientMessage("Saving routine…", hideAfter: 30)
 
-        // Serialize writes: cancel any in-flight routine synthesis and have the new
-        // task wait for it to settle before saving, so two sessions finalizing in
-        // quick succession cannot race on `auxiliaryMemoryStore.save`.
+        // Serialize writes WITHOUT cancelling the predecessor. Cancelling would abort
+        // an in-flight write from a prior already-finalized session before it
+        // persisted, dropping that session's routine. Awaiting the predecessor also
+        // lets us recompute merge candidates AFTER it has saved, so the LLM judge
+        // sees what it just wrote and updates that routine instead of duplicating it.
         let previousRoutineWriteTask = routineWriteTask
-        previousRoutineWriteTask?.cancel()
         routineWriteTask = Task {
             _ = await previousRoutineWriteTask?.value
+            guard !Task.isCancelled else { return }
             do {
+                let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
+                    in: auxiliaryMemoryStore.memories,
+                    category: .routine,
+                    topic: topic,
+                    bundleId: targetBundleId
+                )
+
                 let synthesisResult = try await RoutineSynthesizer.synthesizeRoutine(
                     sessionTrace: turns,
                     gateReasons: gateReasons,
