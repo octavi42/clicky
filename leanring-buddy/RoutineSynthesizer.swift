@@ -95,9 +95,21 @@ enum RoutineSynthesizer {
 
         let parsed = parseStructuredResponse(from: response.text)
 
+        let stableMemoryId = AuxiliaryMemoryMatcher.stableMemoryId(
+            category: .routine,
+            topic: topic,
+            bundleId: targetBundleId
+        )
+
+        // Prefer the candidate the LLM chose to update; otherwise fall back to a
+        // candidate whose id equals the computed stable id. The fallback guards the
+        // "create" path against an id collision: `save` upserts by id, so writing a
+        // fresh Memory over an existing id would wipe its usageCount / isPinned /
+        // bundleIds. `mergeCandidates` always surfaces an exact stable-id match, so
+        // a colliding routine in scope is present here to copy metadata from.
         let existingMemory = parsed.updateMemoryId.flatMap { updateId in
             candidateMemories.first { $0.id == updateId }
-        }
+        } ?? candidateMemories.first { $0.id == stableMemoryId }
 
         let bundleIds: [String]
         if let targetBundleId {
@@ -108,11 +120,7 @@ enum RoutineSynthesizer {
             bundleIds = orderedUniqueBundleIds(from: sessionTrace)
         }
 
-        let memoryId = existingMemory?.id ?? AuxiliaryMemoryMatcher.stableMemoryId(
-            category: .routine,
-            topic: topic,
-            bundleId: targetBundleId
-        )
+        let memoryId = existingMemory?.id ?? stableMemoryId
 
         let memory = Memory(
             id: memoryId,

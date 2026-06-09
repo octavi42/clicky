@@ -107,6 +107,16 @@ final class CompanionResponseOverlayManager {
         overlayPanel?.orderOut(nil)
     }
 
+    /// Hides the overlay only if it is still showing `message`. Lets a caller clear
+    /// its own transient toast without dismissing a different message that has since
+    /// replaced it on this shared manager (e.g. a sibling skill save's success toast
+    /// must survive when a parallel preference/routine write fails).
+    func hideOverlayIfShowing(_ message: String) {
+        guard overlayViewModel.isShowingResponse,
+              overlayViewModel.streamingResponseText == message else { return }
+        hideOverlay()
+    }
+
     // MARK: - Private
 
     private func createOverlayPanelIfNeeded() {

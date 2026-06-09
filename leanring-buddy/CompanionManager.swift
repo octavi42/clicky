@@ -783,7 +783,8 @@ final class CompanionManager: ObservableObject {
         // Optimistic feedback: synthesis runs through Claude and can take several
         // seconds, so acknowledge the save immediately and reconcile to the final
         // "Saved/Updated" toast when the write completes.
-        memorySavedToastManager.showTransientMessage("Saving preference…", hideAfter: 30)
+        let savingToastMessage = "Saving preference…"
+        memorySavedToastManager.showTransientMessage(savingToastMessage, hideAfter: 30)
 
         // Serialize writes WITHOUT cancelling the predecessor. Cancelling would abort
         // an in-flight write from a prior already-finalized session before it
@@ -834,9 +835,11 @@ final class CompanionManager: ObservableObject {
                 writeE2EArtifactsIfNeeded()
                 print("📚 Saved preference memory: \(memory.id)")
             } catch {
-                // Clear the optimistic "Saving preference…" toast so it doesn't linger.
+                // Clear our optimistic toast so it doesn't linger — but only if it's
+                // still the one showing, so we don't dismiss a sibling skill save's
+                // success toast on this shared manager.
                 if !Task.isCancelled {
-                    memorySavedToastManager.hideOverlay()
+                    memorySavedToastManager.hideOverlayIfShowing(savingToastMessage)
                 }
                 print("⚠️ Failed to synthesize preference memory: \(error)")
             }
@@ -856,7 +859,8 @@ final class CompanionManager: ObservableObject {
         // Optimistic feedback: synthesis runs through Claude and can take several
         // seconds, so acknowledge the save immediately and reconcile to the final
         // "Saved/Updated" toast when the write completes.
-        memorySavedToastManager.showTransientMessage("Saving routine…", hideAfter: 30)
+        let savingToastMessage = "Saving routine…"
+        memorySavedToastManager.showTransientMessage(savingToastMessage, hideAfter: 30)
 
         // Serialize writes WITHOUT cancelling the predecessor. Cancelling would abort
         // an in-flight write from a prior already-finalized session before it
@@ -909,9 +913,11 @@ final class CompanionManager: ObservableObject {
                 writeE2EArtifactsIfNeeded()
                 print("📚 Saved routine memory: \(memory.id)")
             } catch {
-                // Clear the optimistic "Saving routine…" toast so it doesn't linger.
+                // Clear our optimistic toast so it doesn't linger — but only if it's
+                // still the one showing, so we don't dismiss a sibling skill save's
+                // success toast on this shared manager.
                 if !Task.isCancelled {
-                    memorySavedToastManager.hideOverlay()
+                    memorySavedToastManager.hideOverlayIfShowing(savingToastMessage)
                 }
                 print("⚠️ Failed to synthesize routine memory: \(error)")
             }
