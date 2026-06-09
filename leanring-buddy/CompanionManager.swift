@@ -798,7 +798,17 @@ final class CompanionManager: ObservableObject {
     }
 
     func dismissRoutineSuggestion(_ suggestion: RoutineSuggestion) {
+        // Dismiss the whole unordered app pair, not just the shown direction.
+        // RoutineDetector collapses A->B / B->A into one chip, so suppressing only
+        // the directed id would let the reverse edge resurface the same pair on the
+        // next refresh.
         sessionDismissedRoutineSuggestionIDs.insert(suggestion.id)
+        sessionDismissedRoutineSuggestionIDs.insert(
+            TransitionEdge.edgeIdentifier(
+                fromBundleId: suggestion.toBundleId,
+                toBundleId: suggestion.fromBundleId
+            )
+        )
         ClickyAnalytics.trackRoutineSuggestionDismissed(
             fromBundleId: suggestion.fromBundleId,
             toBundleId: suggestion.toBundleId
@@ -1103,7 +1113,11 @@ final class CompanionManager: ObservableObject {
 
     private func startFrontmostAppObservation() {
         previousFrontmostBundleId = frontmostApplicationBundleId()
-        previousFrontmostActivatedAt = Date()
+        // We don't know how long the user was already in the startup app, so treat
+        // its dwell as long-established rather than starting the clock at launch.
+        // Otherwise a switch shortly after Clicky starts would fail the dwell gate
+        // and drop a transition the user had genuinely been set up to make.
+        previousFrontmostActivatedAt = .distantPast
 
         frontmostAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
