@@ -131,7 +131,13 @@ enum PreferenceSynthesizer {
             title: parsed.title.isEmpty ? (existingMemory?.title ?? "User preference") : parsed.title,
             summary: parsed.summary.isEmpty ? (existingMemory?.summary ?? "") : parsed.summary,
             body: parsed.body.isEmpty ? (existingMemory?.body ?? response.text) : parsed.body,
-            bundleIds: bundleIds,
+            // Scope changes only on an explicit app signal. If this restatement
+            // names an app, use that scope; otherwise keep the existing memory's
+            // scope rather than silently broadening an app-scoped preference to
+            // global. An app-agnostic phrasing is not an "apply everywhere" command,
+            // and leaking a scoped preference (e.g. "in Xcode use tabs") into every
+            // app is the worse failure than under-applying it.
+            bundleIds: bundleIds.isEmpty ? (existingMemory?.bundleIds ?? []) : bundleIds,
             status: .active,
             isPinned: existingMemory?.isPinned ?? false,
             usageCount: existingMemory?.usageCount ?? 0,
