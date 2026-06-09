@@ -111,6 +111,11 @@ final class CompanionManager: ObservableObject {
     private var frontmostAppObserver: NSObjectProtocol?
     private var previousFrontmostBundleId: String?
     private var previousFrontmostActivatedAt: Date?
+    /// When the user taps a routine chip we programmatically open the target app,
+    /// which fires the same activation observer that records passive edges. This
+    /// one-shot token lets us skip recording that self-induced switch so a chip
+    /// tap doesn't inflate the very edge that produced it.
+    private var bundleIdToSkipForNextRoutineTransition: String?
     private var sessionDismissedRoutineSuggestionIDs: Set<String> = []
     private var lastTrackedRoutineSuggestionIDs: Set<String> = []
 
@@ -794,6 +799,8 @@ final class CompanionManager: ObservableObject {
             fromBundleId: suggestion.fromBundleId,
             toBundleId: suggestion.toBundleId
         )
+        // Don't let this user-initiated open count as an organic transition.
+        bundleIdToSkipForNextRoutineTransition = suggestion.toBundleId
         activateApplication(bundleIdentifier: suggestion.toBundleId)
     }
 
@@ -1135,6 +1142,11 @@ final class CompanionManager: ObservableObject {
     }
 
     private func recordRoutineTransitionIfNeeded(to newBundleId: String?) {
+        // Consume the one-shot skip token regardless of outcome so it never
+        // lingers and suppresses a later, unrelated activation.
+        let bundleIdToSkip = bundleIdToSkipForNextRoutineTransition
+        bundleIdToSkipForNextRoutineTransition = nil
+
         guard isLearningFromSessionsEnabled else {
             previousFrontmostBundleId = newBundleId
             previousFrontmostActivatedAt = Date()
@@ -1168,6 +1180,11 @@ final class CompanionManager: ObservableObject {
         let excludedBundleIds = Set([clickyBundleId].compactMap { $0 })
         guard !excludedBundleIds.contains(previousBundleId),
               !excludedBundleIds.contains(newBundleId) else {
+            return
+        }
+
+        // Skip the self-induced activation from tapping a routine chip.
+        if let bundleIdToSkip, bundleIdToSkip == newBundleId {
             return
         }
 
