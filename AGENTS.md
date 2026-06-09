@@ -84,9 +84,9 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `SkillMatcher.swift` | ~170 | App/topic matching and duplicate skill pair detection. |
 | `SkillCurator.swift` | ~175 | Time-based stale/archive lifecycle plus throttled LLM merge/patch passes. |
 | `SkillSynthesizer.swift` | ~120 | Post-session skill drafting via Claude API. |
-| `PreferenceSynthesizer.swift` | ~150 | Post-session preference memory drafting via Claude API. |
-| `RoutineSynthesizer.swift` | ~160 | Post-session routine memory drafting via Claude API. |
-| `AuxiliaryMemoryMatcher.swift` | ~130 | Stable ID generation, dedup lookup, and routine matching for preference/routine memories; hybrid lexical + Apple embedding similarity with conflict guard |
+| `PreferenceSynthesizer.swift` | ~215 | Post-session preference memory drafting via Claude API. Folds the update-vs-create dedup decision into the synthesis call (LLM judge over recalled candidates) instead of a similarity threshold. Same-axis matches use last-write-wins: the latest stated value updates the existing memory even when it reverses it, so the user never holds two contradictory active preferences. |
+| `RoutineSynthesizer.swift` | ~225 | Post-session routine memory drafting via Claude API. Folds the update-vs-create dedup decision into the synthesis call (LLM judge over recalled candidates). Same-workflow matches use last-write-wins: the latest run's steps replace the old ones. |
+| `AuxiliaryMemoryMatcher.swift` | ~165 | Stable ID generation, dedup lookup, and routine matching for preference/routine memories. Both preferences and routines use a two-pass dedup: `mergeCandidates` (wide-net recall) then an LLM judge in `PreferenceSynthesizer` / `RoutineSynthesizer`. `decideDedup` is the threshold reference path validated by the eval harness. Hybrid lexical + Apple embedding similarity with conflict guard. |
 | `MemorySimilarityScorer.swift` | ~100 | Pluggable dedup scorers: lexical Dice, Apple `NLEmbedding`, and hybrid combiner |
 | `PreferenceConflictDetector.swift` | ~75 | Blocks merge when two preference texts express opposite choices on the same axis |
 | `SkillTriggerEvaluator.swift` | ~110 | Shared heuristics for MemoryGate and skill synthesis (confirmation phrases, topic extraction, screen-teaching detection). |

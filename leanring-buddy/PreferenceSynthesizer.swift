@@ -8,6 +8,13 @@
 import Foundation
 
 enum PreferenceSynthesizer {
+    /// Outcome of a synthesis pass: the memory to persist plus whether it patched
+    /// an existing preference (so the caller can show the right toast / analytics).
+    struct SynthesisResult {
+        let memory: Memory
+        let updatedExistingMemory: Bool
+    }
+
     private static let synthesisSystemPrompt = """
     you write user preference memories for clicky, a screen-native voice tutor.
 
@@ -20,30 +27,43 @@ enum PreferenceSynthesizer {
     keep it concise, practical, and durable. all lowercase.
     """
 
-    private static let patchSystemPrompt = """
-    you update an existing user preference memory for clicky, a screen-native voice tutor.
+    /// Combined judge + writer prompt. The model first decides whether the new
+    /// preference belongs to the same behavioral axis as one of the supplied
+    /// candidates, then writes the memory. Same-axis matches use last-write-wins:
+    /// the newest stated value replaces the old one (even when it reverses it), so
+    /// the user never ends up with two contradictory active preferences. This
+    /// replaces a brittle similarity-threshold merge that failed on short paraphrases.
+    private static let reconcileSystemPrompt = """
+    you maintain user preference memories for clicky, a screen-native voice tutor.
 
-    given the existing preference and a new session, produce an updated memory as plain text with exactly three lines:
+    you are given a new preference the user just stated and a list of existing candidate preferences. do two things:
 
+    1. decide whether the new preference is on the SAME behavioral axis as one of the candidates, or covers a different aspect of behavior.
+       - "axis" means the same dimension of behavior: answer length (short / one sentence / detailed), tone (formal / casual), code style, confirmation behavior, units, etc.
+       - if the new preference is on the same axis as a candidate, update that candidate — even if the new value reverses the old one. the user is revising their preference, and the latest statement wins (last-write-wins). example: an existing "keep answers short" candidate should be updated by "give detailed answers" to now describe detailed answers, so the user never has two contradictory preferences.
+       - create new only when the preference covers a different aspect of behavior than every candidate (e.g. "use keyboard shortcuts" vs an answer-length candidate).
+       - when unsure whether two preferences share an axis, create new.
+
+    2. produce the memory text describing the user's CURRENT (latest) intent.
+
+    respond as plain text with exactly these lines:
+
+    decision: update <id> | create
     title: short label (5 words max)
     summary: one sentence describing the preference
     body: 1-3 imperative sentences telling clicky how to behave
 
-    patch-first rules:
-    - preserve preferences that still apply
-    - merge refinements from the latest session
-    - do not duplicate or contradict without resolving
-
+    when decision is "update <id>", use the exact id of the candidate you are updating and rewrite the memory to reflect the latest value. when decision is "create", omit the id.
     keep it concise, practical, and durable. all lowercase.
     """
 
     static func synthesizePreference(
         sessionTrace: [SessionTraceEntry],
         gateReasons: [GateReason],
-        existingMemory: Memory?,
+        candidateMemories: [Memory],
         targetBundleId: String?,
         claudeAPI: ClaudeAPI
-    ) async throws -> Memory {
+    ) async throws -> SynthesisResult {
         let topic = SkillTriggerEvaluator.deriveTopic(from: sessionTrace)
         let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: sessionTrace)
         let resolvedBundleId = isAppSpecific ? targetBundleId : nil
@@ -52,29 +72,24 @@ enum PreferenceSynthesizer {
         let sessionSummary = renderSessionSummary(
             sessionTrace,
             gateReasons: gateReasons,
-            existingMemory: existingMemory,
+            existingMemory: nil,
             targetBundleId: resolvedBundleId
         )
 
         let userPrompt: String
         let systemPrompt: String
-        if let existingMemory {
-            systemPrompt = patchSystemPrompt
-            userPrompt = """
-            patch this existing preference using the new session:
-
-            existing preference id: \(existingMemory.id)
-            existing title: \(existingMemory.title)
-            existing summary: \(existingMemory.summary)
-            existing body:
-            \(existingMemory.body)
-
-            new session:
-            \(sessionSummary)
-            """
-        } else {
+        if candidateMemories.isEmpty {
             systemPrompt = synthesisSystemPrompt
             userPrompt = "create a new preference memory from this session:\n\n\(sessionSummary)"
+        } else {
+            systemPrompt = reconcileSystemPrompt
+            userPrompt = """
+            new preference session:
+            \(sessionSummary)
+
+            existing candidate preferences:
+            \(renderCandidates(candidateMemories))
+            """
         }
 
         let response = try await claudeAPI.sendTextMessage(
@@ -84,13 +99,18 @@ enum PreferenceSynthesizer {
         )
 
         let parsed = parseStructuredResponse(from: response.text)
+
+        let existingMemory = parsed.updateMemoryId.flatMap { updateId in
+            candidateMemories.first { $0.id == updateId }
+        }
+
         let memoryId = existingMemory?.id ?? AuxiliaryMemoryMatcher.stableMemoryId(
             category: .preference,
             topic: topic,
             bundleId: resolvedBundleId
         )
 
-        return Memory(
+        let memory = Memory(
             id: memoryId,
             category: .preference,
             title: parsed.title.isEmpty ? (existingMemory?.title ?? "User preference") : parsed.title,
@@ -102,9 +122,25 @@ enum PreferenceSynthesizer {
             usageCount: existingMemory?.usageCount ?? 0,
             lastUsed: Date()
         )
+
+        return SynthesisResult(memory: memory, updatedExistingMemory: existingMemory != nil)
     }
 
-    private static func parseStructuredResponse(from responseText: String) -> (title: String, summary: String, body: String) {
+    private static func renderCandidates(_ candidates: [Memory]) -> String {
+        candidates.map { candidate in
+            """
+            - id: \(candidate.id)
+              title: \(candidate.title)
+              summary: \(candidate.summary)
+              body: \(candidate.body)
+            """
+        }.joined(separator: "\n")
+    }
+
+    private static func parseStructuredResponse(
+        from responseText: String
+    ) -> (updateMemoryId: String?, title: String, summary: String, body: String) {
+        var updateMemoryId: String?
         var title = ""
         var summary = ""
         var bodyLines: [String] = []
@@ -114,7 +150,12 @@ enum PreferenceSynthesizer {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedLine.isEmpty else { continue }
 
-            if trimmedLine.lowercased().hasPrefix("title:") {
+            if trimmedLine.lowercased().hasPrefix("decision:") {
+                updateMemoryId = parseUpdateMemoryId(
+                    from: String(trimmedLine.dropFirst("decision:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                currentSection = "decision"
+            } else if trimmedLine.lowercased().hasPrefix("title:") {
                 title = String(trimmedLine.dropFirst("title:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 currentSection = "title"
             } else if trimmedLine.lowercased().hasPrefix("summary:") {
@@ -131,7 +172,17 @@ enum PreferenceSynthesizer {
             }
         }
 
-        return (title: title, summary: summary, body: bodyLines.joined(separator: "\n"))
+        return (updateMemoryId: updateMemoryId, title: title, summary: summary, body: bodyLines.joined(separator: "\n"))
+    }
+
+    /// Parses the `decision:` value. Returns the candidate id to update, or nil for "create".
+    private static func parseUpdateMemoryId(from decisionValue: String) -> String? {
+        let normalizedDecision = decisionValue.lowercased()
+        guard normalizedDecision.hasPrefix("update") else { return nil }
+
+        let remainder = String(decisionValue.dropFirst("update".count))
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \t<>"))
+        return remainder.isEmpty ? nil : remainder
     }
 
     private static func renderSessionSummary(

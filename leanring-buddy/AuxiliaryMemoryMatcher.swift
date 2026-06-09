@@ -46,27 +46,53 @@ enum AuxiliaryMemoryMatcher {
         }
     }
 
+    /// Pass 1 of the two-pass dedup: a wide-net recall that returns the most
+    /// similar existing memories as merge *candidates*. The final update-vs-create
+    /// decision is made by the synthesizer's LLM (assertion-equivalence), because
+    /// short-text embedding/lexical scores are too unreliable to merge on directly.
+    /// We deliberately do NOT apply the precision-first merge thresholds here — we
+    /// cast a wide net and let the LLM reconcile. An exact stable-id match is always
+    /// surfaced first so an obvious same-topic memory is never missed.
     @MainActor
-    static func findMemoryForUpdate(
+    static func mergeCandidates(
         in memories: [Memory],
         category: MemoryCategory,
         topic: String,
-        bundleId: String?
-    ) -> Memory? {
-        let expectedMemoryId = stableMemoryId(category: category, topic: topic, bundleId: bundleId)
+        bundleId: String?,
+        limit: Int = 3
+    ) -> [Memory] {
+        let trimmedTopic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTopic.isEmpty else { return [] }
 
-        if let exactMatch = memories.first(where: { $0.id == expectedMemoryId && $0.category == category }) {
-            return exactMatch
+        let scopedMemories = memories.filter { memory in
+            memory.category == category &&
+            bundleScopeMatches(existingMemory: memory, bundleId: bundleId)
+        }
+        guard !scopedMemories.isEmpty else { return [] }
+
+        let scorer = MemorySimilarityScorerFactory.makeScorer(
+            for: MemoryDedupConfiguration.productionScorerKind
+        )
+
+        let rankedByScore = scopedMemories
+            .map { memory in
+                (memory: memory, score: similarityScore(between: trimmedTopic, and: memory, using: scorer))
+            }
+            .sorted { $0.score > $1.score }
+            .map(\.memory)
+
+        let expectedMemoryId = stableMemoryId(category: category, topic: trimmedTopic, bundleId: bundleId)
+        let exactMatch = scopedMemories.first { $0.id == expectedMemoryId }
+
+        var orderedCandidates: [Memory] = []
+        if let exactMatch {
+            orderedCandidates.append(exactMatch)
+        }
+        for memory in rankedByScore where !orderedCandidates.contains(where: { $0.id == memory.id }) {
+            orderedCandidates.append(memory)
         }
 
-        return decideDedup(
-            newTopic: topic,
-            category: category,
-            bundleId: bundleId,
-            existingMemories: memories,
-            scorerKind: MemoryDedupConfiguration.productionScorerKind,
-            mergeThreshold: MemoryDedupConfiguration.mergeThreshold
-        )
+        return Array(orderedCandidates.prefix(limit))
     }
 
     @MainActor

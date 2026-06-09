@@ -220,6 +220,12 @@ struct MemoryDedupEvalTests {
         #expect(productionMetrics.falseMergeCount <= 2)
     }
 
+    /// Guards the threshold dedup layer (`decideDedup`, the recall/precision
+    /// reference): fuzzy lexical/embedding scores alone must never auto-merge
+    /// opposite preferences. Production preferences and routines additionally run an
+    /// LLM judge that applies last-write-wins on the same axis, so a contradicting
+    /// preference there UPDATES the existing memory rather than creating a duplicate —
+    /// a deliberately different (smarter) layer from the one asserted here.
     @Test @MainActor func doesNotMergeOppositePreferences() throws {
         let pairs = try loadEvalPairs()
 
@@ -264,6 +270,46 @@ struct MemoryDedupEvalTests {
             )
             #expect(decision == "merge", "Expected \(pair.id) to merge, got \(decision)")
         }
+    }
+
+    /// Pass 1 (recall) must surface a lexically-distant paraphrase as a merge candidate
+    /// even when the precision-first threshold path (`decideDedup`) would reject it.
+    /// This is the real-world bug: a short utterance vs an expanded synthesized memory
+    /// scores too low for any fixed threshold, so the LLM judge needs it as a candidate.
+    @Test @MainActor func mergeCandidatesSurfaceLexicallyDistantParaphrase() {
+        let existingShortAnswers = Memory(
+            id: "pref-keep-answers-short",
+            category: .preference,
+            title: "keep answers short",
+            summary: "the user prefers brief, concise responses",
+            body: "keep all answers short. avoid unnecessary elaboration or filler. get to the point immediately.",
+            bundleIds: [],
+            status: .active
+        )
+
+        let newParaphrase = "from now on keep the answers in one sentence"
+
+        let thresholdMatch = AuxiliaryMemoryMatcher.decideDedup(
+            newTopic: newParaphrase,
+            category: .preference,
+            bundleId: nil,
+            existingMemories: [existingShortAnswers],
+            scorerKind: MemoryDedupConfiguration.productionScorerKind,
+            mergeThreshold: MemoryDedupConfiguration.mergeThreshold
+        )
+
+        let candidates = AuxiliaryMemoryMatcher.mergeCandidates(
+            in: [existingShortAnswers],
+            category: .preference,
+            topic: newParaphrase,
+            bundleId: nil
+        )
+
+        #expect(thresholdMatch == nil, "Threshold path is expected to miss this lexically-distant paraphrase")
+        #expect(
+            candidates.contains { $0.id == existingShortAnswers.id },
+            "Recall must surface the paraphrase as a merge candidate for the LLM judge"
+        )
     }
 
     @Test func preferenceConflictDetectorBlocksReversedPreferOverPairs() {

@@ -96,6 +96,15 @@ final class CompanionManager: ObservableObject {
     private var appliedSkillIDsInCurrentSession: [String] = []
     private var sessionStartedAt: Date?
     private var sessionIdleTimer: Timer?
+    /// Set when the open session contains a stated preference. Shortens the idle
+    /// boundary so explicit preferences ("from now on…") are distilled and saved
+    /// promptly instead of waiting the full inactivity window.
+    private var sessionContainsStatedPreference = false
+    /// Idle window before a session finalizes. Default measures genuine inactivity;
+    /// the shorter window applies once a stated preference is detected so the save
+    /// toast appears quickly after the user finishes speaking.
+    private static let defaultSessionIdleInterval: TimeInterval = 30
+    private static let statedPreferenceSessionIdleInterval: TimeInterval = 6
     /// True from push-to-talk press until the voice pipeline returns to idle.
     /// Prevents panel-close finalization while the menu bar panel is auto-dismissed on PTT.
     private var isPushToTalkInteractionActive = false
@@ -433,6 +442,11 @@ final class CompanionManager: ObservableObject {
         if wasEmptyBeforeAppend {
             sessionStartedAt = Date()
             didDraftSkillForCurrentSession = false
+            sessionContainsStatedPreference = false
+        }
+
+        if PreferenceSignalDetector.containsAnyPreferenceSignal(in: transcript) {
+            sessionContainsStatedPreference = true
         }
 
         if sessionTrace.count > 20 {
@@ -459,7 +473,10 @@ final class CompanionManager: ObservableObject {
 
     private func restartSessionIdleTimer() {
         sessionIdleTimer?.invalidate()
-        let idleTimer = Timer(timeInterval: 30, repeats: false) { [weak self] _ in
+        let idleInterval = sessionContainsStatedPreference
+            ? Self.statedPreferenceSessionIdleInterval
+            : Self.defaultSessionIdleInterval
+        let idleTimer = Timer(timeInterval: idleInterval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 // If the assistant is still speaking when the timer fires, defer the
@@ -516,6 +533,7 @@ final class CompanionManager: ObservableObject {
             sessionTrace.removeAll()
             appliedSkillIDsInCurrentSession.removeAll()
             didDraftSkillForCurrentSession = false
+            sessionContainsStatedPreference = false
         } catch {
             // Keep the trace and re-arm the idle timer so a transient I/O error
             // gets another chance to persist instead of silently losing the capture.
@@ -754,35 +772,41 @@ final class CompanionManager: ObservableObject {
             )
             : nil
 
+        let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
+            in: auxiliaryMemoryStore.memories,
+            category: .preference,
+            topic: preferenceMatchText,
+            bundleId: targetBundleId
+        )
+
+        // Optimistic feedback: synthesis runs through Claude and can take several
+        // seconds, so acknowledge the save immediately and reconcile to the final
+        // "Saved/Updated" toast when the write completes.
+        memorySavedToastManager.showTransientMessage("Saving preference…", hideAfter: 30)
+
         preferenceWriteTask = Task {
             do {
-                let existingMemory = AuxiliaryMemoryMatcher.findMemoryForUpdate(
-                    in: auxiliaryMemoryStore.memories,
-                    category: .preference,
-                    topic: preferenceMatchText,
-                    bundleId: targetBundleId
-                )
-
-                let memory = try await PreferenceSynthesizer.synthesizePreference(
+                let synthesisResult = try await PreferenceSynthesizer.synthesizePreference(
                     sessionTrace: turns,
                     gateReasons: gateReasons,
-                    existingMemory: existingMemory,
+                    candidateMemories: candidateMemories,
                     targetBundleId: targetBundleId,
                     claudeAPI: claudeAPI
                 )
 
                 guard !Task.isCancelled else { return }
 
+                let memory = synthesisResult.memory
                 _ = try auxiliaryMemoryStore.save(memory)
                 syncTeachingSkillsFromStore()
 
                 ClickyAnalytics.trackMemorySaved(
                     category: .preference,
                     memoryID: memory.id,
-                    updatedExisting: existingMemory != nil
+                    updatedExisting: synthesisResult.updatedExistingMemory
                 )
 
-                let toastMessage = existingMemory != nil
+                let toastMessage = synthesisResult.updatedExistingMemory
                     ? "Updated a memory: \(memory.title)"
                     : "Saved a new memory: \(memory.title)"
                 memorySavedToastManager.showTransientMessage(toastMessage, hideAfter: 6, onTap: { [weak self] in
@@ -792,6 +816,10 @@ final class CompanionManager: ObservableObject {
                 writeE2EArtifactsIfNeeded()
                 print("📚 Saved preference memory: \(memory.id)")
             } catch {
+                // Clear the optimistic "Saving preference…" toast so it doesn't linger.
+                if !Task.isCancelled {
+                    memorySavedToastManager.hideOverlay()
+                }
                 print("⚠️ Failed to synthesize preference memory: \(error)")
             }
         }
@@ -807,25 +835,31 @@ final class CompanionManager: ObservableObject {
             frontmostBundleId: turns.last?.bundleId ?? frontmostApplicationBundleId()
         )
 
+        let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
+            in: auxiliaryMemoryStore.memories,
+            category: .routine,
+            topic: topic,
+            bundleId: targetBundleId
+        )
+
+        // Optimistic feedback: synthesis runs through Claude and can take several
+        // seconds, so acknowledge the save immediately and reconcile to the final
+        // "Saved/Updated" toast when the write completes.
+        memorySavedToastManager.showTransientMessage("Saving routine…", hideAfter: 30)
+
         routineWriteTask = Task {
             do {
-                let existingMemory = AuxiliaryMemoryMatcher.findMemoryForUpdate(
-                    in: auxiliaryMemoryStore.memories,
-                    category: .routine,
-                    topic: topic,
-                    bundleId: targetBundleId
-                )
-
-                let memory = try await RoutineSynthesizer.synthesizeRoutine(
+                let synthesisResult = try await RoutineSynthesizer.synthesizeRoutine(
                     sessionTrace: turns,
                     gateReasons: gateReasons,
-                    existingMemory: existingMemory,
+                    candidateMemories: candidateMemories,
                     targetBundleId: targetBundleId,
                     claudeAPI: claudeAPI
                 )
 
                 guard !Task.isCancelled else { return }
 
+                let memory = synthesisResult.memory
                 _ = try auxiliaryMemoryStore.save(memory)
                 syncTeachingSkillsFromStore()
                 topicHistoryStore.recordTopic(
@@ -836,10 +870,10 @@ final class CompanionManager: ObservableObject {
                 ClickyAnalytics.trackMemorySaved(
                     category: .routine,
                     memoryID: memory.id,
-                    updatedExisting: existingMemory != nil
+                    updatedExisting: synthesisResult.updatedExistingMemory
                 )
 
-                let toastMessage = existingMemory != nil
+                let toastMessage = synthesisResult.updatedExistingMemory
                     ? "Updated a memory: \(memory.title)"
                     : "Saved a new memory: \(memory.title)"
                 memorySavedToastManager.showTransientMessage(toastMessage, hideAfter: 6, onTap: { [weak self] in
@@ -849,6 +883,10 @@ final class CompanionManager: ObservableObject {
                 writeE2EArtifactsIfNeeded()
                 print("📚 Saved routine memory: \(memory.id)")
             } catch {
+                // Clear the optimistic "Saving routine…" toast so it doesn't linger.
+                if !Task.isCancelled {
+                    memorySavedToastManager.hideOverlay()
+                }
                 print("⚠️ Failed to synthesize routine memory: \(error)")
             }
         }
