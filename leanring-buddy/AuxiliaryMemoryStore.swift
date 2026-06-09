@@ -2,8 +2,8 @@
 //  AuxiliaryMemoryStore.swift
 //  leanring-buddy
 //
-//  Persists non-skill memories (preferences, routines) until dedicated
-//  generators and stores land for each category.
+//  Persists non-skill memories (preferences, routines) at
+//  ~/.clicky/auxiliary-memories.json.
 //
 
 import Foundation

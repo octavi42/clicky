@@ -140,7 +140,9 @@ enum ClickyAnalytics {
             "passed_categories": passedCategories,
             "gate_reasons": gateReasons,
             "block_reasons": blockReasons,
-            "should_distill_skill": !gateReasons.isEmpty
+            "should_distill_skill": passedCategories.contains(MemoryCategory.skill.rawValue),
+            "should_distill_preference": passedCategories.contains(MemoryCategory.preference.rawValue),
+            "should_distill_routine": passedCategories.contains(MemoryCategory.routine.rawValue)
         ])
     }
 
@@ -155,6 +157,14 @@ enum ClickyAnalytics {
         PostHogSDK.shared.capture("teaching_skill_saved", properties: [
             "skill_id": skillID,
             "reason": reason,
+            "updated_existing": updatedExisting
+        ])
+    }
+
+    static func trackMemorySaved(category: MemoryCategory, memoryID: String, updatedExisting: Bool) {
+        PostHogSDK.shared.capture("memory_saved", properties: [
+            "category": category.rawValue,
+            "memory_id": memoryID,
             "updated_existing": updatedExisting
         ])
     }
