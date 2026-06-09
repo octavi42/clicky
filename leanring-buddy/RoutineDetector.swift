@@ -83,9 +83,13 @@ enum RoutineDetector {
         [fromBundleId, toBundleId].sorted().joined(separator: "<->")
     }
 
+    /// Outgoing totals used as the strength denominator. Only "mature" edges
+    /// (those meeting the distinct-days bar) are counted, so a recurring A->B
+    /// isn't pushed under the strength threshold by a pile of one-off, low-signal
+    /// A->X destinations that don't themselves represent a habit.
     private static func outgoingTransitionTotals(from edges: [TransitionEdge]) -> [String: Int] {
         var totals: [String: Int] = [:]
-        for edge in edges {
+        for edge in edges where edge.distinctDayCount >= minimumDistinctDays {
             totals[edge.fromBundleId, default: 0] += edge.count
         }
         return totals

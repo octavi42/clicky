@@ -189,6 +189,38 @@ struct RoutineDetectorTests {
         #expect(suggestions[0].toBundleId == "com.figma.Desktop")
     }
 
+    @Test func strengthDenominatorIgnoresImmatureEdges() {
+        // A recurring Slack->Figma (3 days) alongside many one-day, one-off
+        // destinations should still surface: the immature edges must not dilute
+        // the strength denominator below the threshold.
+        var edges = [
+            TransitionEdge(
+                fromBundleId: "com.slack.Slack",
+                toBundleId: "com.figma.Desktop",
+                count: 3,
+                occurrenceDays: ["2026-06-01", "2026-06-02", "2026-06-03"],
+                firstSeen: Date(),
+                lastSeen: Date()
+            )
+        ]
+        for oneOffIndex in 0..<10 {
+            edges.append(
+                TransitionEdge(
+                    fromBundleId: "com.slack.Slack",
+                    toBundleId: "com.example.oneoff\(oneOffIndex)",
+                    count: 1,
+                    occurrenceDays: ["2026-06-01"],
+                    firstSeen: Date(),
+                    lastSeen: Date()
+                )
+            )
+        }
+
+        let suggestions = RoutineDetector.suggestions(from: edges, suppressedEdgeIds: [])
+        #expect(suggestions.count == 1)
+        #expect(suggestions[0].toBundleId == "com.figma.Desktop")
+    }
+
     @Test func capsSuggestionCountAtTwo() {
         // Strength = count / totalOutgoingFromSource. With totals 10+8+2=20,
         // Figma (0.50) and Mail (0.40) pass the 0.4 bar; Cursor (0.10) does not.
