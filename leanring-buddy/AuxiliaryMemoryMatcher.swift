@@ -7,6 +7,19 @@
 
 import Foundation
 
+enum MemoryDedupConfiguration {
+    /// Selected by MemoryDedupEvalTests threshold sweep (precision-first).
+    static let productionScorerKind: MemorySimilarityScorerKind = .hybrid
+    static let lexicalMergeThreshold: Double = 0.55
+    static let appleMergeThreshold: Double = 0.93
+    /// Apple embeddings have a high unrelated baseline, so require some lexical overlap too.
+    static let appleMergeLexicalFloor: Double = 0.18
+
+    static var mergeThreshold: Double {
+        lexicalMergeThreshold
+    }
+}
+
 enum AuxiliaryMemoryMatcher {
     static func stableMemoryId(
         category: MemoryCategory,
@@ -30,6 +43,7 @@ enum AuxiliaryMemoryMatcher {
         }
     }
 
+    @MainActor
     static func findMemoryForUpdate(
         in memories: [Memory],
         category: MemoryCategory,
@@ -42,20 +56,76 @@ enum AuxiliaryMemoryMatcher {
             return exactMatch
         }
 
-        let topicTokens = Set(SkillMatcher.meaningfulTokens(topic))
-        guard !topicTokens.isEmpty else { return nil }
+        return decideDedup(
+            newTopic: topic,
+            category: category,
+            bundleId: bundleId,
+            existingMemories: memories,
+            scorerKind: MemoryDedupConfiguration.productionScorerKind,
+            mergeThreshold: MemoryDedupConfiguration.mergeThreshold
+        )
+    }
 
-        let categoryMemories = memories.filter { memory in
+    @MainActor
+    static func decideDedup(
+        newTopic: String,
+        category: MemoryCategory,
+        bundleId: String?,
+        existingMemories: [Memory],
+        scorer: any MemorySimilarityScorer,
+        mergeThreshold: Double
+    ) -> Memory? {
+        let trimmedTopic = newTopic.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTopic.isEmpty else { return nil }
+
+        let scopedMemories = existingMemories.filter { memory in
             memory.category == category &&
-            (bundleId == nil || memory.bundleIds.isEmpty || memory.bundleIds.contains(bundleId!))
+            bundleScopeMatches(existingMemory: memory, bundleId: bundleId)
+        }
+        guard !scopedMemories.isEmpty else { return nil }
+
+        let bestMatch = scopedMemories.max { lhs, rhs in
+            similarityScore(
+                between: trimmedTopic,
+                and: rhs,
+                using: scorer
+            ) < similarityScore(
+                between: trimmedTopic,
+                and: lhs,
+                using: scorer
+            )
         }
 
-        return categoryMemories.max { lhs, rhs in
-            overlapScore(lhs, topicTokens: topicTokens) < overlapScore(rhs, topicTokens: topicTokens)
-        }
-        .flatMap { candidate in
-            overlapScore(candidate, topicTokens: topicTokens) >= 1 ? candidate : nil
-        }
+        guard let bestMatch else { return nil }
+
+        let bestScore = similarityScore(between: trimmedTopic, and: bestMatch, using: scorer)
+        return shouldMerge(
+            newTopic: trimmedTopic,
+            existingMemory: bestMatch,
+            bestScore: bestScore,
+            scorer: scorer,
+            mergeThreshold: mergeThreshold
+        ) ? bestMatch : nil
+    }
+
+    @MainActor
+    static func decideDedup(
+        newTopic: String,
+        category: MemoryCategory,
+        bundleId: String?,
+        existingMemories: [Memory],
+        scorerKind: MemorySimilarityScorerKind,
+        mergeThreshold: Double
+    ) -> Memory? {
+        let scorer = MemorySimilarityScorerFactory.makeScorer(for: scorerKind)
+        return decideDedup(
+            newTopic: newTopic,
+            category: category,
+            bundleId: bundleId,
+            existingMemories: existingMemories,
+            scorer: scorer,
+            mergeThreshold: mergeThreshold
+        )
     }
 
     static func matchRoutines(
@@ -68,7 +138,7 @@ enum AuxiliaryMemoryMatcher {
         let eligibleRoutines = memories.filter { memory in
             memory.category == .routine &&
             memory.status == .active &&
-            (bundleId == nil || memory.bundleIds.isEmpty || memory.bundleIds.contains(bundleId!))
+            bundleScopeMatches(existingMemory: memory, bundleId: bundleId)
         }
 
         let scored = eligibleRoutines.compactMap { routine -> (Memory, Int)? in
@@ -98,13 +168,54 @@ enum AuxiliaryMemoryMatcher {
         )
     }
 
-    private static func overlapScore(_ memory: Memory, topicTokens: Set<String>) -> Int {
-        let memoryTokens = Set(
-            SkillMatcher.meaningfulTokens(memory.title) +
-            SkillMatcher.meaningfulTokens(memory.summary) +
-            SkillMatcher.meaningfulTokens(memory.body)
+    static func memoryComparisonText(for memory: Memory) -> String {
+        [memory.title, memory.summary, memory.body]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ". ")
+    }
+
+    static func bundleScopeMatches(existingMemory: Memory, bundleId: String?) -> Bool {
+        bundleId == nil ||
+        existingMemory.bundleIds.isEmpty ||
+        existingMemory.bundleIds.contains(bundleId!)
+    }
+
+    @MainActor
+    static func shouldMerge(
+        newTopic: String,
+        existingMemory: Memory,
+        bestScore: Double,
+        scorer: any MemorySimilarityScorer,
+        mergeThreshold: Double
+    ) -> Bool {
+        let existingText = memoryComparisonText(for: existingMemory)
+
+        if PreferenceConflictDetector.hasConflict(between: newTopic, and: existingText) {
+            return false
+        }
+
+        if let hybridScorer = scorer as? HybridMemorySimilarityScorer {
+            let lexicalScore = hybridScorer.lexicalSimilarity(between: newTopic, and: existingText)
+            let appleScore = hybridScorer.appleSimilarity(between: newTopic, and: existingText)
+            let passesLexicalGate = lexicalScore >= MemoryDedupConfiguration.lexicalMergeThreshold
+            let passesAppleGate = appleScore >= MemoryDedupConfiguration.appleMergeThreshold &&
+                lexicalScore >= MemoryDedupConfiguration.appleMergeLexicalFloor
+            return passesLexicalGate || passesAppleGate
+        }
+
+        return bestScore >= mergeThreshold
+    }
+
+    private static func similarityScore(
+        between newTopic: String,
+        and existingMemory: Memory,
+        using scorer: any MemorySimilarityScorer
+    ) -> Double {
+        scorer.similarity(
+            between: newTopic,
+            and: memoryComparisonText(for: existingMemory)
         )
-        return memoryTokens.filter { topicTokens.contains($0) }.count
     }
 
     private static func slug(from text: String) -> String {

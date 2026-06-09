@@ -86,7 +86,9 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `SkillSynthesizer.swift` | ~120 | Post-session skill drafting via Claude API. |
 | `PreferenceSynthesizer.swift` | ~150 | Post-session preference memory drafting via Claude API. |
 | `RoutineSynthesizer.swift` | ~160 | Post-session routine memory drafting via Claude API. |
-| `AuxiliaryMemoryMatcher.swift` | ~110 | Stable ID generation, dedup lookup, and routine matching for preference/routine memories. |
+| `AuxiliaryMemoryMatcher.swift` | ~130 | Stable ID generation, dedup lookup, and routine matching for preference/routine memories; hybrid lexical + Apple embedding similarity with conflict guard |
+| `MemorySimilarityScorer.swift` | ~100 | Pluggable dedup scorers: lexical Dice, Apple `NLEmbedding`, and hybrid combiner |
+| `PreferenceConflictDetector.swift` | ~75 | Blocks merge when two preference texts express opposite choices on the same axis |
 | `SkillTriggerEvaluator.swift` | ~110 | Shared heuristics for MemoryGate and skill synthesis (confirmation phrases, topic extraction, screen-teaching detection). |
 | `TeachingPromptBuilder.swift` | ~100 | Composes voice response system prompt with matched teaching skills, active preferences, and matched routines. |
 | `TeachingSkillsLibraryView.swift` | ~260 | Full skills library UI with status filters, detail view, pin/delete/restore. |
@@ -100,6 +102,7 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `Resources/niche-examples.json` | ~80 | Bundled niche suggestion packs and app-specific prompt maps. |
 | `leanring-buddyTests/TeachingSkillTests.swift` | ~320 | Unit tests for skill parsing, matching, triggers, prompt injection, duplicate detection. |
 | `leanring-buddyTests/MemoryTests.swift` | ~196 | Unit tests for memory adapter, filtering, update round-trip, and delete. |
+| `leanring-buddyTests/MemoryDedupEvalTests.swift` | ~220 | Offline dedup eval harness with labeled fixture pairs; regression guard for merge vs separate decisions. |
 | `tests/e2e/full-stack/` | — | Scaffold for full user-perspective E2E (BlackHole, PTT simulation, Peekaboo). |
 | `worker/src/index.ts` | ~142 | Cloudflare Worker proxy. Three routes: `/chat` (Claude), `/tts` (ElevenLabs), `/transcribe-token` (AssemblyAI temp token). |
 
