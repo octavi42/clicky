@@ -222,11 +222,10 @@ enum ClickyAnalytics {
         ])
     }
 
-    static func trackRoutineSuggestionDismissed(fromBundleId: String, toBundleId: String, permanent: Bool) {
+    static func trackRoutineSuggestionDismissed(fromBundleId: String, toBundleId: String) {
         PostHogSDK.shared.capture("routine_suggestion_dismissed", properties: [
             "from_bundle_id": fromBundleId,
-            "to_bundle_id": toBundleId,
-            "permanent": permanent
+            "to_bundle_id": toBundleId
         ])
     }
 }

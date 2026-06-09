@@ -108,7 +108,6 @@ final class CompanionManager: ObservableObject {
 
     private let nicheDiscoveryManager = NicheDiscoveryManager()
     private let activityStore = ActivityStore()
-    private let nicheClassifier = NicheClassifier()
     private var frontmostAppObserver: NSObjectProtocol?
     private var previousFrontmostBundleId: String?
     private var previousFrontmostActivatedAt: Date?
@@ -505,8 +504,8 @@ final class CompanionManager: ObservableObject {
             appliedSkillIDsInCurrentSession.removeAll()
             didDraftSkillForCurrentSession = false
             // Per-session routine dismissals are scoped to a single voice session,
-            // so clear them here (matching the `permanent: false` dismiss analytics)
-            // and let any still-qualifying routine resurface next session.
+            // so clear them here and let any still-qualifying routine resurface
+            // next session.
             if !sessionDismissedRoutineSuggestionIDs.isEmpty {
                 sessionDismissedRoutineSuggestionIDs.removeAll()
                 refreshRoutineSuggestions()
@@ -802,19 +801,7 @@ final class CompanionManager: ObservableObject {
         sessionDismissedRoutineSuggestionIDs.insert(suggestion.id)
         ClickyAnalytics.trackRoutineSuggestionDismissed(
             fromBundleId: suggestion.fromBundleId,
-            toBundleId: suggestion.toBundleId,
-            permanent: false
-        )
-        refreshRoutineSuggestions()
-    }
-
-    func neverSuggestRoutine(_ suggestion: RoutineSuggestion) {
-        activityStore.suppress(edgeId: suggestion.id)
-        sessionDismissedRoutineSuggestionIDs.insert(suggestion.id)
-        ClickyAnalytics.trackRoutineSuggestionDismissed(
-            fromBundleId: suggestion.fromBundleId,
-            toBundleId: suggestion.toBundleId,
-            permanent: true
+            toBundleId: suggestion.toBundleId
         )
         refreshRoutineSuggestions()
     }
@@ -1158,12 +1145,15 @@ final class CompanionManager: ObservableObject {
         let dwellSeconds = activationTimestamp.timeIntervalSince(previousActivatedAt)
         guard dwellSeconds >= RoutineDetector.minimumPreviousAppDwellSeconds else { return }
 
+        // Only exclude Clicky's own activations. We intentionally do NOT filter
+        // "niche-neutral" apps here: communication/hub apps (Slack, Chrome, Mail,
+        // Finder) are flagged neutral for niche inference, but those are exactly
+        // where real routines begin. Noise is handled downstream by the strength
+        // and distinct-days thresholds in RoutineDetector.
         let clickyBundleId = Bundle.main.bundleIdentifier
         let excludedBundleIds = Set([clickyBundleId].compactMap { $0 })
         guard !excludedBundleIds.contains(previousBundleId),
-              !excludedBundleIds.contains(newBundleId),
-              !nicheClassifier.isNeutralApp(bundleId: previousBundleId),
-              !nicheClassifier.isNeutralApp(bundleId: newBundleId) else {
+              !excludedBundleIds.contains(newBundleId) else {
             return
         }
 
