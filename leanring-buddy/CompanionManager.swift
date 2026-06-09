@@ -784,13 +784,21 @@ final class CompanionManager: ObservableObject {
         // "Saved/Updated" toast when the write completes.
         memorySavedToastManager.showTransientMessage("Saving preference…", hideAfter: 30)
 
+        // Serialize writes: cancel any in-flight preference synthesis and have the
+        // new task wait for it to settle before saving. Otherwise two sessions
+        // finalizing in quick succession can race on `auxiliaryMemoryStore.save`,
+        // letting an older session's write clobber the newer preference.
+        let previousPreferenceWriteTask = preferenceWriteTask
+        previousPreferenceWriteTask?.cancel()
         preferenceWriteTask = Task {
+            _ = await previousPreferenceWriteTask?.value
             do {
                 let synthesisResult = try await PreferenceSynthesizer.synthesizePreference(
                     sessionTrace: turns,
                     gateReasons: gateReasons,
                     candidateMemories: candidateMemories,
                     targetBundleId: targetBundleId,
+                    dedupTopic: preferenceMatchText,
                     claudeAPI: claudeAPI
                 )
 
@@ -847,7 +855,13 @@ final class CompanionManager: ObservableObject {
         // "Saved/Updated" toast when the write completes.
         memorySavedToastManager.showTransientMessage("Saving routine…", hideAfter: 30)
 
+        // Serialize writes: cancel any in-flight routine synthesis and have the new
+        // task wait for it to settle before saving, so two sessions finalizing in
+        // quick succession cannot race on `auxiliaryMemoryStore.save`.
+        let previousRoutineWriteTask = routineWriteTask
+        previousRoutineWriteTask?.cancel()
         routineWriteTask = Task {
+            _ = await previousRoutineWriteTask?.value
             do {
                 let synthesisResult = try await RoutineSynthesizer.synthesizeRoutine(
                     sessionTrace: turns,
@@ -1511,17 +1525,26 @@ final class CompanionManager: ObservableObject {
 
     /// Called on app termination before `stop()` tears everything down. Persists
     /// an in-flight session (so MemoryGate runs) and waits — bounded — for any
-    /// pending skill synthesis to finish, so quitting right after "got it" does
-    /// not drop the session JSON or the skill write.
+    /// pending memory synthesis (skill, preference, routine) to finish, so
+    /// quitting right after "got it" or a "Saving…" toast does not drop the
+    /// session JSON or the in-flight Claude write.
     func finishPendingWorkBeforeTermination() async {
         finalizeAndPersistSession()
 
-        guard let pendingSkillWriteTask = skillWriteTask else { return }
+        // All three distillation paths run async Claude writes after finalize and
+        // must be drained, not just the skill write — preference/routine saves are
+        // now triggered on a short idle boundary and can be in flight at quit.
+        let pendingWriteTasks = [skillWriteTask, preferenceWriteTask, routineWriteTask].compactMap { $0 }
+        guard !pendingWriteTasks.isEmpty else { return }
 
         // Bound the wait so a slow or hung synthesis network call can never
         // block app termination indefinitely.
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { await pendingSkillWriteTask.value }
+            group.addTask {
+                for pendingWriteTask in pendingWriteTasks {
+                    await pendingWriteTask.value
+                }
+            }
             group.addTask { try? await Task.sleep(nanoseconds: 8_000_000_000) }
             _ = await group.next()
             group.cancelAll()
@@ -1543,6 +1566,10 @@ final class CompanionManager: ObservableObject {
         currentResponseTask = nil
         skillWriteTask?.cancel()
         skillWriteTask = nil
+        preferenceWriteTask?.cancel()
+        preferenceWriteTask = nil
+        routineWriteTask?.cancel()
+        routineWriteTask = nil
         sessionIdleTimer?.invalidate()
         sessionIdleTimer = nil
         if let panelClosedObserver {

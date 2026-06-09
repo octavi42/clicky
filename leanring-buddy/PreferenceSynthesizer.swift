@@ -62,9 +62,16 @@ enum PreferenceSynthesizer {
         gateReasons: [GateReason],
         candidateMemories: [Memory],
         targetBundleId: String?,
+        dedupTopic: String,
         claudeAPI: ClaudeAPI
     ) async throws -> SynthesisResult {
-        let topic = SkillTriggerEvaluator.deriveTopic(from: sessionTrace)
+        // Mint the stable ID from the exact same text the caller used for recall
+        // (`PreferenceSignalDetector.preferenceMatchText`). If this used a different
+        // topic source, a future restatement's recall key would not match this
+        // memory's ID and dedup would miss, accumulating duplicates.
+        let topic = dedupTopic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? SkillTriggerEvaluator.deriveTopic(from: sessionTrace)
+            : dedupTopic
         let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: sessionTrace)
         let resolvedBundleId = isAppSpecific ? targetBundleId : nil
         let bundleIds = resolvedBundleId.map { [$0] } ?? []
