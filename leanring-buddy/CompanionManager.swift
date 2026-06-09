@@ -118,7 +118,17 @@ final class CompanionManager: ObservableObject {
     private var skillSaveStatusClearTask: Task<Void, Never>?
 
     private let nicheDiscoveryManager = NicheDiscoveryManager()
+    private let activityStore = ActivityStore()
     private var frontmostAppObserver: NSObjectProtocol?
+    private var previousFrontmostBundleId: String?
+    private var previousFrontmostActivatedAt: Date?
+    /// When the user taps a routine chip we programmatically open the target app,
+    /// which fires the same activation observer that records passive edges. This
+    /// one-shot token lets us skip recording that self-induced switch so a chip
+    /// tap doesn't inflate the very edge that produced it.
+    private var bundleIdToSkipForNextRoutineTransition: String?
+    private var sessionDismissedRoutineSuggestionIDs: Set<String> = []
+    private var lastTrackedRoutineSuggestionIDs: Set<String> = []
 
     @Published private(set) var selectedUserNiche: NicheDiscoveryManager.Niche?
     @Published private(set) var inferredUserNiche: NicheDiscoveryManager.Niche?
@@ -126,6 +136,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var nicheSuggestions: [NicheSuggestion] = []
     @Published private(set) var nicheSuggestionContextLabel: String?
     @Published private(set) var nicheSuggestionMode: NicheSuggestionSnapshot.Mode?
+    @Published private(set) var routineSuggestions: [RoutineSuggestion] = []
 
     /// Skills currently on disk, exposed for the panel UI.
     @Published private(set) var teachingSkills: [TeachingSkill] = []
@@ -212,6 +223,7 @@ final class CompanionManager: ObservableObject {
     func setLearningFromSessionsEnabled(_ enabled: Bool) {
         isLearningFromSessionsEnabled = enabled
         ClickyDefaults.shared.set(enabled, forKey: "isLearningFromSessionsEnabled")
+        refreshRoutineSuggestions()
     }
 
     func refreshTeachingSkills() {
@@ -548,6 +560,13 @@ final class CompanionManager: ObservableObject {
             appliedSkillIDsInCurrentSession.removeAll()
             didDraftSkillForCurrentSession = false
             sessionContainsStatedPreference = false
+            // Per-session routine dismissals are scoped to a single voice session,
+            // so clear them here and let any still-qualifying routine resurface
+            // next session.
+            if !sessionDismissedRoutineSuggestionIDs.isEmpty {
+                sessionDismissedRoutineSuggestionIDs.removeAll()
+                refreshRoutineSuggestions()
+            }
         } catch {
             // Keep the trace and re-arm the idle timer so a transient I/O error
             // gets another chance to persist instead of silently losing the capture.
@@ -970,6 +989,60 @@ final class CompanionManager: ObservableObject {
         nicheSuggestionMode = snapshot.mode
     }
 
+    func refreshRoutineSuggestions() {
+        guard isLearningFromSessionsEnabled else {
+            routineSuggestions = []
+            return
+        }
+
+        let detectedSuggestions = RoutineDetector.suggestions(
+            from: activityStore.allEdges(),
+            suppressedEdgeIds: activityStore.suppressedEdgeIdentifiers(),
+            sessionDismissedEdgeIds: sessionDismissedRoutineSuggestionIDs
+        )
+        routineSuggestions = detectedSuggestions
+
+        let currentSuggestionIDs = Set(detectedSuggestions.map(\.id))
+        let newlyShownSuggestionIDs = currentSuggestionIDs.subtracting(lastTrackedRoutineSuggestionIDs)
+        for suggestion in detectedSuggestions where newlyShownSuggestionIDs.contains(suggestion.id) {
+            ClickyAnalytics.trackRoutineSuggestionShown(
+                fromBundleId: suggestion.fromBundleId,
+                toBundleId: suggestion.toBundleId,
+                suggestionCount: detectedSuggestions.count
+            )
+        }
+        lastTrackedRoutineSuggestionIDs = currentSuggestionIDs
+    }
+
+    func actOnRoutineSuggestion(_ suggestion: RoutineSuggestion) {
+        ClickyAnalytics.trackRoutineSuggestionTapped(
+            fromBundleId: suggestion.fromBundleId,
+            toBundleId: suggestion.toBundleId
+        )
+        // Don't let this user-initiated open count as an organic transition.
+        bundleIdToSkipForNextRoutineTransition = suggestion.toBundleId
+        activateApplication(bundleIdentifier: suggestion.toBundleId)
+    }
+
+    func dismissRoutineSuggestion(_ suggestion: RoutineSuggestion) {
+        // Dismiss the whole unordered app pair, not just the shown direction.
+        // RoutineDetector collapses A->B / B->A into one chip, so suppressing only
+        // the directed id would let the reverse edge resurface the same pair on the
+        // next refresh.
+        sessionDismissedRoutineSuggestionIDs.insert(suggestion.id)
+        sessionDismissedRoutineSuggestionIDs.insert(
+            TransitionEdge.edgeIdentifier(
+                fromBundleId: suggestion.toBundleId,
+                toBundleId: suggestion.fromBundleId
+            )
+        )
+        ClickyAnalytics.trackRoutineSuggestionDismissed(
+            fromBundleId: suggestion.fromBundleId,
+            toBundleId: suggestion.toBundleId
+        )
+        refreshRoutineSuggestions()
+    }
+
     func askWithSuggestion(_ suggestion: NicheSuggestion) {
         let effectiveNiche = nicheDiscoveryManager.effectiveNiche?.rawValue ?? "unknown"
         ClickyAnalytics.trackNicheSuggestionTapped(
@@ -1251,6 +1324,7 @@ final class CompanionManager: ObservableObject {
 
         nicheDiscoveryManager.startTracking()
         refreshNicheSuggestions()
+        refreshRoutineSuggestions()
     }
 
     private func stopNicheDiscovery() {
@@ -1265,6 +1339,13 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startFrontmostAppObservation() {
+        previousFrontmostBundleId = frontmostApplicationBundleId()
+        // We don't know how long the user was already in the startup app, so treat
+        // its dwell as long-established rather than starting the clock at launch.
+        // Otherwise a switch shortly after Clicky starts would fail the dwell gate
+        // and drop a transition the user had genuinely been set up to make.
+        previousFrontmostActivatedAt = .distantPast
+
         frontmostAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -1273,9 +1354,78 @@ final class CompanionManager: ObservableObject {
             guard let self else { return }
             let bundleId = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?
                 .bundleIdentifier
+            self.recordRoutineTransitionIfNeeded(to: bundleId)
             self.nicheDiscoveryManager.handleFrontmostApplicationChanged(to: bundleId)
             self.refreshNicheSuggestions()
+            self.refreshRoutineSuggestions()
         }
+    }
+
+    private func recordRoutineTransitionIfNeeded(to newBundleId: String?) {
+        // Consume the one-shot skip token regardless of outcome so it never
+        // lingers and suppresses a later, unrelated activation.
+        let bundleIdToSkip = bundleIdToSkipForNextRoutineTransition
+        bundleIdToSkipForNextRoutineTransition = nil
+
+        guard isLearningFromSessionsEnabled else {
+            previousFrontmostBundleId = newBundleId
+            previousFrontmostActivatedAt = Date()
+            return
+        }
+
+        let activationTimestamp = Date()
+        defer {
+            previousFrontmostBundleId = newBundleId
+            previousFrontmostActivatedAt = activationTimestamp
+        }
+
+        guard let previousBundleId = previousFrontmostBundleId,
+              let newBundleId,
+              !previousBundleId.isEmpty,
+              !newBundleId.isEmpty,
+              previousBundleId != newBundleId else {
+            return
+        }
+
+        guard let previousActivatedAt = previousFrontmostActivatedAt else { return }
+        let dwellSeconds = activationTimestamp.timeIntervalSince(previousActivatedAt)
+        guard dwellSeconds >= RoutineDetector.minimumPreviousAppDwellSeconds else { return }
+
+        // Only exclude Clicky's own activations. We intentionally do NOT filter
+        // "niche-neutral" apps here: communication/hub apps (Slack, Chrome, Mail,
+        // Finder) are flagged neutral for niche inference, but those are exactly
+        // where real routines begin. Noise is handled downstream by the strength
+        // and distinct-days thresholds in RoutineDetector.
+        let clickyBundleId = Bundle.main.bundleIdentifier
+        let excludedBundleIds = Set([clickyBundleId].compactMap { $0 })
+        guard !excludedBundleIds.contains(previousBundleId),
+              !excludedBundleIds.contains(newBundleId) else {
+            return
+        }
+
+        // Skip the self-induced activation from tapping a routine chip.
+        if let bundleIdToSkip, bundleIdToSkip == newBundleId {
+            return
+        }
+
+        activityStore.recordTransition(
+            from: previousBundleId,
+            to: newBundleId,
+            at: activationTimestamp
+        )
+    }
+
+    private func activateApplication(bundleIdentifier: String) {
+        if let runningApplication = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first {
+            runningApplication.activate()
+            return
+        }
+
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return
+        }
+
+        NSWorkspace.shared.openApplication(at: applicationURL, configuration: NSWorkspace.OpenConfiguration())
     }
 
     deinit {

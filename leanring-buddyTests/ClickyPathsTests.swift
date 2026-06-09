@@ -61,6 +61,7 @@ struct ClickyPathsTests {
             #expect(ClickyPaths.skills == temporaryHome.appendingPathComponent("skills", isDirectory: true))
             #expect(ClickyPaths.sessions == temporaryHome.appendingPathComponent("sessions", isDirectory: true))
             #expect(ClickyPaths.topicHistory == temporaryHome.appendingPathComponent("topic-history.json"))
+            #expect(ClickyPaths.activity == temporaryHome.appendingPathComponent("activity.json"))
         }
     }
 

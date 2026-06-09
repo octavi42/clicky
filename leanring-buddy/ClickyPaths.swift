@@ -58,6 +58,10 @@ enum ClickyPaths {
     static var sessions: URL {
         home.appendingPathComponent("sessions", isDirectory: true)
     }
+
+    static var activity: URL {
+        home.appendingPathComponent("activity.json")
+    }
 }
 
 enum ClickyDefaults {

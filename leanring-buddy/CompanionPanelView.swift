@@ -245,6 +245,10 @@ struct CompanionPanelView: View {
                 pendingVaultWriteHomeBanner(pendingVaultWrite)
             }
 
+            if !companionManager.routineSuggestions.isEmpty {
+                routineSuggestionsSection
+            }
+
             if showsSuggestedAsksSection {
                 nicheSuggestionsSection
             }
@@ -936,6 +940,70 @@ struct CompanionPanelView: View {
         .pointerCursor()
         .accessibilityLabel(showsSuggestedAsks ? "Hide suggested asks" : "Show suggested asks")
         .accessibilityIdentifier("clicky.panel.suggested-asks.toggle")
+    }
+
+    private var routineSuggestionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Routines Clicky noticed:")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(companionManager.routineSuggestions) { suggestion in
+                routineSuggestionCard(suggestion)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityIdentifier("clicky.panel.routine-suggestions.section")
+    }
+
+    private func routineSuggestionCard(_ suggestion: RoutineSuggestion) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button(action: {
+                companionManager.actOnRoutineSuggestion(suggestion)
+            }) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "arrow.triangle.swap")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.accent)
+                        .padding(.top, 2)
+
+                    Text(suggestion.label)
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                        .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+                )
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .accessibilityIdentifier("clicky.panel.routine-suggestions.card.\(suggestion.id)")
+
+            Button(action: {
+                companionManager.dismissRoutineSuggestion(suggestion)
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .accessibilityLabel("Dismiss routine suggestion")
+            .accessibilityIdentifier("clicky.panel.routine-suggestions.dismiss.\(suggestion.id)")
+        }
     }
 
     private var nicheSuggestionsSection: some View {
