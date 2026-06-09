@@ -107,7 +107,13 @@ final class CompanionManager: ObservableObject {
     private var skillSaveStatusClearTask: Task<Void, Never>?
 
     private let nicheDiscoveryManager = NicheDiscoveryManager()
+    private let activityStore = ActivityStore()
+    private let nicheClassifier = NicheClassifier()
     private var frontmostAppObserver: NSObjectProtocol?
+    private var previousFrontmostBundleId: String?
+    private var previousFrontmostActivatedAt: Date?
+    private var sessionDismissedRoutineSuggestionIDs: Set<String> = []
+    private var lastTrackedRoutineSuggestionIDs: Set<String> = []
 
     @Published private(set) var selectedUserNiche: NicheDiscoveryManager.Niche?
     @Published private(set) var inferredUserNiche: NicheDiscoveryManager.Niche?
@@ -115,6 +121,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var nicheSuggestions: [NicheSuggestion] = []
     @Published private(set) var nicheSuggestionContextLabel: String?
     @Published private(set) var nicheSuggestionMode: NicheSuggestionSnapshot.Mode?
+    @Published private(set) var routineSuggestions: [RoutineSuggestion] = []
 
     /// Skills currently on disk, exposed for the panel UI.
     @Published private(set) var teachingSkills: [TeachingSkill] = []
@@ -201,6 +208,7 @@ final class CompanionManager: ObservableObject {
     func setLearningFromSessionsEnabled(_ enabled: Bool) {
         isLearningFromSessionsEnabled = enabled
         ClickyDefaults.shared.set(enabled, forKey: "isLearningFromSessionsEnabled")
+        refreshRoutineSuggestions()
     }
 
     func refreshTeachingSkills() {
@@ -750,6 +758,60 @@ final class CompanionManager: ObservableObject {
         nicheSuggestionMode = snapshot.mode
     }
 
+    func refreshRoutineSuggestions() {
+        guard isLearningFromSessionsEnabled else {
+            routineSuggestions = []
+            return
+        }
+
+        let detectedSuggestions = RoutineDetector.suggestions(
+            from: activityStore.allEdges(),
+            suppressedEdgeIds: activityStore.suppressedEdgeIdentifiers(),
+            sessionDismissedEdgeIds: sessionDismissedRoutineSuggestionIDs
+        )
+        routineSuggestions = detectedSuggestions
+
+        let currentSuggestionIDs = Set(detectedSuggestions.map(\.id))
+        let newlyShownSuggestionIDs = currentSuggestionIDs.subtracting(lastTrackedRoutineSuggestionIDs)
+        for suggestion in detectedSuggestions where newlyShownSuggestionIDs.contains(suggestion.id) {
+            ClickyAnalytics.trackRoutineSuggestionShown(
+                fromBundleId: suggestion.fromBundleId,
+                toBundleId: suggestion.toBundleId,
+                suggestionCount: detectedSuggestions.count
+            )
+        }
+        lastTrackedRoutineSuggestionIDs = currentSuggestionIDs
+    }
+
+    func actOnRoutineSuggestion(_ suggestion: RoutineSuggestion) {
+        ClickyAnalytics.trackRoutineSuggestionTapped(
+            fromBundleId: suggestion.fromBundleId,
+            toBundleId: suggestion.toBundleId
+        )
+        activateApplication(bundleIdentifier: suggestion.toBundleId)
+    }
+
+    func dismissRoutineSuggestion(_ suggestion: RoutineSuggestion) {
+        sessionDismissedRoutineSuggestionIDs.insert(suggestion.id)
+        ClickyAnalytics.trackRoutineSuggestionDismissed(
+            fromBundleId: suggestion.fromBundleId,
+            toBundleId: suggestion.toBundleId,
+            permanent: false
+        )
+        refreshRoutineSuggestions()
+    }
+
+    func neverSuggestRoutine(_ suggestion: RoutineSuggestion) {
+        activityStore.suppress(edgeId: suggestion.id)
+        sessionDismissedRoutineSuggestionIDs.insert(suggestion.id)
+        ClickyAnalytics.trackRoutineSuggestionDismissed(
+            fromBundleId: suggestion.fromBundleId,
+            toBundleId: suggestion.toBundleId,
+            permanent: true
+        )
+        refreshRoutineSuggestions()
+    }
+
     func askWithSuggestion(_ suggestion: NicheSuggestion) {
         let effectiveNiche = nicheDiscoveryManager.effectiveNiche?.rawValue ?? "unknown"
         ClickyAnalytics.trackNicheSuggestionTapped(
@@ -1031,6 +1093,7 @@ final class CompanionManager: ObservableObject {
 
         nicheDiscoveryManager.startTracking()
         refreshNicheSuggestions()
+        refreshRoutineSuggestions()
     }
 
     private func stopNicheDiscovery() {
@@ -1045,6 +1108,9 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startFrontmostAppObservation() {
+        previousFrontmostBundleId = frontmostApplicationBundleId()
+        previousFrontmostActivatedAt = Date()
+
         frontmostAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -1053,9 +1119,65 @@ final class CompanionManager: ObservableObject {
             guard let self else { return }
             let bundleId = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?
                 .bundleIdentifier
+            self.recordRoutineTransitionIfNeeded(to: bundleId)
             self.nicheDiscoveryManager.handleFrontmostApplicationChanged(to: bundleId)
             self.refreshNicheSuggestions()
+            self.refreshRoutineSuggestions()
         }
+    }
+
+    private func recordRoutineTransitionIfNeeded(to newBundleId: String?) {
+        guard isLearningFromSessionsEnabled else {
+            previousFrontmostBundleId = newBundleId
+            previousFrontmostActivatedAt = Date()
+            return
+        }
+
+        let activationTimestamp = Date()
+        defer {
+            previousFrontmostBundleId = newBundleId
+            previousFrontmostActivatedAt = activationTimestamp
+        }
+
+        guard let previousBundleId = previousFrontmostBundleId,
+              let newBundleId,
+              !previousBundleId.isEmpty,
+              !newBundleId.isEmpty,
+              previousBundleId != newBundleId else {
+            return
+        }
+
+        guard let previousActivatedAt = previousFrontmostActivatedAt else { return }
+        let dwellSeconds = activationTimestamp.timeIntervalSince(previousActivatedAt)
+        guard dwellSeconds >= RoutineDetector.minimumPreviousAppDwellSeconds else { return }
+
+        let clickyBundleId = Bundle.main.bundleIdentifier
+        let excludedBundleIds = Set([clickyBundleId].compactMap { $0 })
+        guard !excludedBundleIds.contains(previousBundleId),
+              !excludedBundleIds.contains(newBundleId),
+              !nicheClassifier.isNeutralApp(bundleId: previousBundleId),
+              !nicheClassifier.isNeutralApp(bundleId: newBundleId) else {
+            return
+        }
+
+        activityStore.recordTransition(
+            from: previousBundleId,
+            to: newBundleId,
+            at: activationTimestamp
+        )
+    }
+
+    private func activateApplication(bundleIdentifier: String) {
+        if let runningApplication = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first {
+            runningApplication.activate()
+            return
+        }
+
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return
+        }
+
+        NSWorkspace.shared.openApplication(at: applicationURL, configuration: NSWorkspace.OpenConfiguration())
     }
 
     deinit {

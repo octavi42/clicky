@@ -92,10 +92,14 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `DummyMemorySeeder.swift` | ~146 | DEBUG-only seeder for sample memories during local development. |
 | `ClickyE2EConfiguration.swift` | ~75 | Launch flags and E2E debug artifact paths for automated tests. |
 | `NicheDiscoveryManager.swift` | ~175 | Niche onboarding, static/app-aware suggestion cards, local override loading. |
+| `ActivityStore.swift` | ~155 | Persists app-to-app transition edges to `ClickyPaths.activity` for passive routine detection. |
+| `RoutineDetector.swift` | ~115 | Deterministic recurrence rules over transition edges; produces `RoutineSuggestion` chips (no LLM). |
+| `ClickyPaths.swift` | ~72 | Central data-home paths (`home`, `skills`, `sessions`, `topicHistory`, `activity`). |
 | `UserNiche.swift` | ~35 | User niche enum (general, content creator, developer, student, designer). |
 | `Resources/niche-examples.json` | ~80 | Bundled niche suggestion packs and app-specific prompt maps. |
 | `leanring-buddyTests/TeachingSkillTests.swift` | ~320 | Unit tests for skill parsing, matching, triggers, prompt injection, duplicate detection. |
 | `leanring-buddyTests/MemoryTests.swift` | ~196 | Unit tests for memory adapter, filtering, update round-trip, and delete. |
+| `leanring-buddyTests/ActivityStoreTests.swift` | ~175 | Unit tests for transition edge counting, pruning, suppression, and routine detection thresholds. |
 | `tests/e2e/full-stack/` | — | Scaffold for full user-perspective E2E (BlackHole, PTT simulation, Peekaboo). |
 | `worker/src/index.ts` | ~142 | Cloudflare Worker proxy. Three routes: `/chat` (Claude), `/tts` (ElevenLabs), `/transcribe-token` (AssemblyAI temp token). |
 

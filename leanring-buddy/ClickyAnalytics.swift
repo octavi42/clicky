@@ -200,4 +200,33 @@ enum ClickyAnalytics {
             "prompt_id": promptID
         ])
     }
+
+    // MARK: - Routine Suggestions
+
+    static func trackRoutineSuggestionShown(
+        fromBundleId: String,
+        toBundleId: String,
+        suggestionCount: Int
+    ) {
+        PostHogSDK.shared.capture("routine_suggestion_shown", properties: [
+            "from_bundle_id": fromBundleId,
+            "to_bundle_id": toBundleId,
+            "suggestion_count": suggestionCount
+        ])
+    }
+
+    static func trackRoutineSuggestionTapped(fromBundleId: String, toBundleId: String) {
+        PostHogSDK.shared.capture("routine_suggestion_tapped", properties: [
+            "from_bundle_id": fromBundleId,
+            "to_bundle_id": toBundleId
+        ])
+    }
+
+    static func trackRoutineSuggestionDismissed(fromBundleId: String, toBundleId: String, permanent: Bool) {
+        PostHogSDK.shared.capture("routine_suggestion_dismissed", properties: [
+            "from_bundle_id": fromBundleId,
+            "to_bundle_id": toBundleId,
+            "permanent": permanent
+        ])
+    }
 }
