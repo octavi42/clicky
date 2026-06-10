@@ -10,7 +10,7 @@ Data home: `/tmp/clicky-roadmap-ideas`
 |---|------|--------|-------------|
 | 1 | Memory Receipts | **Done** (merged 2026-06-10) | `feature/memory-receipts` → [PR #14](https://github.com/octavi42/clicky/pull/14) |
 | 2 | What Did You Learn About Me? | **Done** (implemented 2026-06-10) | `feature/what-did-you-learn` |
-| 3 | Memory Diff Timeline | **Next** | `feature/memory-diff-timeline` |
+| 3 | Memory Diff Timeline | **Next** — see [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) | `feature/memory-diff-timeline` |
 | 4 | Daily Brain Digest | Pending | `feature/daily-brain-digest` |
 | 5 | Memory Hygiene Coach | Pending | `feature/memory-hygiene-coach` |
 | 6 | Unique Stuff You Do | Pending | `feature/unique-behavior-insights` |
@@ -81,7 +81,9 @@ Likely implementation areas:
 - `PersonalKnowledgeManager.swift` for opt-in vault signals.
 - `MemoriesLibraryView.swift` or a Brain section in `CompanionPanelView.swift`.
 
-### 3. Memory Diff Timeline
+### 3. Memory Diff Timeline — **NEXT** (prep doc: [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md))
+
+Branch `feature/memory-diff-timeline` is ready. Full UX spec, technical starting points, and post-`/clear` prompt are in the prep doc.
 
 Show how memories changed over time, especially preferences and routines.
 
@@ -251,4 +253,4 @@ Cursor rule: `.cursor/rules/roadmap-ideas-git-workflow.mdc`
 - ~~The first implementation slice should make saved memory explainable with evidence.~~ **Shipped** — see `MemoryReceipt.swift`, `MemoriesLibraryView` receipt section, `CompanionManager.explainWhyMemoryWasSaved`.
 - ~~What Did You Learn About Me? — voice query + Brain tab summary grounded in active local memories.~~ **Shipped** — see `SelfKnowledgeSummary.swift`, `CompanionManager.speakWhatClickyLearnedAboutMe`, Brain tab button in `CompanionPanelView`.
 - Features should build on existing stores and UI instead of inventing a parallel memory system.
-- **Next task:** Memory Diff Timeline — version history on memory updates with receipt-linked evidence in `MemoriesLibraryView`.
+- **Next task:** Memory Diff Timeline — read [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) first; branch `feature/memory-diff-timeline` is checked out in the roadmap worktree.
