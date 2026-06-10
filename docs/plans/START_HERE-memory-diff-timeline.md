@@ -6,13 +6,13 @@ Parent roadmap: [START_HERE-roadmap-ideas.md](./START_HERE-roadmap-ideas.md)
 
 ## Status
 
-Roadmap task **#3 — Next to implement**. Tasks 1–2 are merged to `main`:
+Roadmap task **#3 — Implemented 2026-06-10** on this branch, following the recommended Option A (receipts-first + title/summary snapshots on each receipt at capture). Manual library edits still don't append receipts — follow-up slice if needed.
 
 | # | Task | Status | PR |
 |---|------|--------|-----|
 | 1 | Memory Receipts | **Done** | [#14](https://github.com/octavi42/clicky/pull/14) |
 | 2 | What Did You Learn About Me? | **Done** | [#15](https://github.com/octavi42/clicky/pull/15) |
-| 3 | **Memory Diff Timeline** | **Start here** | `feature/memory-diff-timeline` |
+| 3 | **Memory Diff Timeline** | **Done** (implemented 2026-06-10) | `feature/memory-diff-timeline` |
 
 ## Product arc (why this feature exists)
 
