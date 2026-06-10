@@ -14,6 +14,19 @@ final class TeachingSkillStore {
 
     private(set) var skills: [TeachingSkill] = []
 
+    private let receiptsEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }()
+
+    private let receiptsDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
     func loadSkills() {
         let fileManager = FileManager.default
         try? fileManager.createDirectory(at: Self.skillsRootURL, withIntermediateDirectories: true)
@@ -31,9 +44,10 @@ final class TeachingSkillStore {
         for folder in folders where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
             let skillFile = folder.appendingPathComponent("SKILL.md")
             guard let markdown = try? String(contentsOf: skillFile, encoding: .utf8),
-                  let skill = TeachingSkill.parse(id: folder.lastPathComponent, markdown: markdown) else {
+                  var skill = TeachingSkill.parse(id: folder.lastPathComponent, markdown: markdown) else {
                 continue
             }
+            skill.receipts = loadReceipts(from: skill.receiptsFileURL)
             loaded.append(skill)
         }
 
@@ -48,6 +62,10 @@ final class TeachingSkillStore {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: skill.folderURL, withIntermediateDirectories: true)
         try skill.serialize().write(to: skill.fileURL, atomically: true, encoding: .utf8)
+        if !skill.receipts.isEmpty {
+            let encodedReceipts = try receiptsEncoder.encode(skill.receipts)
+            try encodedReceipts.write(to: skill.receiptsFileURL, options: .atomic)
+        }
         if let index = skills.firstIndex(where: { $0.id == skill.id }) {
             skills[index] = skill
         } else {
@@ -104,5 +122,13 @@ final class TeachingSkillStore {
     func skills(withStatus status: TeachingSkillStatus?) -> [TeachingSkill] {
         guard let status else { return skills }
         return skills.filter { $0.status == status }
+    }
+
+    private func loadReceipts(from receiptsFileURL: URL) -> [MemoryReceipt] {
+        guard let receiptsData = try? Data(contentsOf: receiptsFileURL),
+              let decodedReceipts = try? receiptsDecoder.decode([MemoryReceipt].self, from: receiptsData) else {
+            return []
+        }
+        return decodedReceipts
     }
 }

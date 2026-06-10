@@ -28,6 +28,14 @@ enum SkillSaveStatus: Equatable {
     case failed
 }
 
+/// Lifecycle of an "Ask Clicky why" receipt explanation, driven by
+/// `CompanionManager.explainWhyMemoryWasSaved`. Drives the button loading
+/// state while Clicky composes and speaks the answer.
+enum MemoryReceiptExplanationState: Equatable {
+    case idle
+    case generating(memoryID: String)
+}
+
 @MainActor
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
@@ -150,6 +158,9 @@ final class CompanionManager: ObservableObject {
     /// Visible save progress for implicit skill drafting in the memories panel.
     @Published private(set) var skillSaveStatus: SkillSaveStatus = .idle
 
+    /// Progress of the "Ask Clicky why" spoken receipt explanation.
+    @Published private(set) var memoryReceiptExplanationState: MemoryReceiptExplanationState = .idle
+
     /// When disabled, Clicky still reads skills but will not create new ones.
     @Published var isLearningFromSessionsEnabled: Bool = ClickyDefaults.shared.object(forKey: "isLearningFromSessionsEnabled") == nil
         ? true
@@ -197,6 +208,15 @@ final class CompanionManager: ObservableObject {
     /// Scheduled hide for transient cursor mode — cancelled if the user
     /// speaks again before the delay elapses.
     private var transientHideTask: Task<Void, Never>?
+
+    /// The in-flight "Ask Clicky why" explanation, if any. Cancelled when the
+    /// user requests another explanation or leaves the memory detail view.
+    private var memoryReceiptExplanationTask: Task<Void, Never>?
+
+    /// True while the receipt explanation owns TTS playback / the voice state.
+    /// `clearMemoryReceiptExplanation` only stops audio and resets state when
+    /// this is set, so it never interrupts an unrelated voice response.
+    private var isReceiptExplanationSpeechActive = false
     private let memorySavedToastManager = CompanionResponseOverlayManager()
 
     /// Path to the Clicky.app bundle for this run. Shown when TCC must target this build.
@@ -326,6 +346,112 @@ final class CompanionManager: ObservableObject {
             } catch {
                 print("⚠️ Failed to delete memory \(id): \(error)")
             }
+        }
+    }
+
+    // MARK: - Memory Receipt Explanation ("Ask Clicky why")
+
+    /// Generates and speaks a grounded explanation of why this memory was
+    /// saved, using only its receipt evidence. Memories saved before receipts
+    /// existed get an honest canned answer instead of an invented one.
+    func explainWhyMemoryWasSaved(_ memory: Memory) {
+        memoryReceiptExplanationTask?.cancel()
+        if isReceiptExplanationSpeechActive {
+            elevenLabsTTSClient.stopPlayback()
+            isReceiptExplanationSpeechActive = false
+        }
+        memoryReceiptExplanationState = .generating(memoryID: memory.id)
+
+        memoryReceiptExplanationTask = Task {
+            let explanationText = await composeReceiptExplanationText(for: memory)
+
+            guard !Task.isCancelled else { return }
+
+            ClickyAnalytics.trackMemoryReceiptExplained(
+                category: memory.category,
+                memoryID: memory.id,
+                hadReceipt: !memory.receipts.isEmpty
+            )
+
+            // Only drive the cursor overlay's voice state when Clicky is idle.
+            // If a push-to-talk interaction is active, speaking states belong
+            // to that pipeline and must not be stomped from the panel.
+            let shouldDriveVoiceState = (voiceState == .idle)
+
+            isReceiptExplanationSpeechActive = true
+            do {
+                if shouldDriveVoiceState { voiceState = .processing }
+                try await elevenLabsTTSClient.speakText(explanationText)
+                if shouldDriveVoiceState { voiceState = .responding }
+
+                // speakText returns once playback *starts*; hold the responding
+                // state until the audio finishes, mirroring the main pipeline.
+                while elevenLabsTTSClient.isPlaying {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    if Task.isCancelled { break }
+                }
+            } catch is CancellationError {
+                // Superseded by a newer explanation or the user left the view.
+            } catch {
+                ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+                print("⚠️ ElevenLabs TTS error during receipt explanation: \(error)")
+                speakCreditsErrorFallback()
+            }
+            isReceiptExplanationSpeechActive = false
+
+            // Return the cursor to idle only if this explanation still owns the
+            // state (a push-to-talk start would have changed it already).
+            if shouldDriveVoiceState && !Task.isCancelled &&
+                (voiceState == .processing || voiceState == .responding) {
+                voiceState = .idle
+            }
+
+            if !Task.isCancelled {
+                memoryReceiptExplanationState = .idle
+            }
+        }
+    }
+
+    /// Stops an in-flight explanation when the user leaves the memory detail
+    /// view or switches to a different memory.
+    func clearMemoryReceiptExplanation() {
+        memoryReceiptExplanationTask?.cancel()
+        memoryReceiptExplanationTask = nil
+        if isReceiptExplanationSpeechActive {
+            elevenLabsTTSClient.stopPlayback()
+            isReceiptExplanationSpeechActive = false
+            if voiceState == .processing || voiceState == .responding {
+                voiceState = .idle
+            }
+        }
+        memoryReceiptExplanationState = .idle
+    }
+
+    private func composeReceiptExplanationText(for memory: Memory) async -> String {
+        guard let latestReceipt = memory.latestReceipt else {
+            return ReceiptExplanationPromptBuilder.missingReceiptExplanation
+        }
+
+        do {
+            let response = try await claudeAPI.sendTextMessage(
+                systemPrompt: ReceiptExplanationPromptBuilder.explanationSystemPrompt,
+                userPrompt: ReceiptExplanationPromptBuilder.buildExplanationUserPrompt(
+                    memory: memory,
+                    receipts: memory.receipts
+                ),
+                maxTokens: 200
+            )
+
+            let trimmedExplanation = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedExplanation.isEmpty else {
+                return ReceiptExplanationPromptBuilder.buildDeterministicFallbackExplanation(receipt: latestReceipt)
+            }
+            return trimmedExplanation
+        } catch {
+            // The button must still answer when Claude is unreachable — fall
+            // back to a template sentence composed from the receipt facts.
+            print("⚠️ Failed to generate receipt explanation, using deterministic fallback: \(error)")
+            return ReceiptExplanationPromptBuilder.buildDeterministicFallbackExplanation(receipt: latestReceipt)
         }
     }
 
@@ -624,17 +750,17 @@ final class CompanionManager: ObservableObject {
         )
 
         if decision.shouldDistillSkill, !didDraftSkillForCurrentSession {
-            distillSkill(from: session.turns, gateReasons: skillGateReasons)
+            distillSkill(from: session.turns, gateReasons: skillGateReasons, sessionId: session.sessionId)
         }
 
         if decision.shouldDistillPreference {
             let preferenceGateReasons = decision.passedCategories[.preference] ?? []
-            distillPreference(from: session.turns, gateReasons: preferenceGateReasons)
+            distillPreference(from: session.turns, gateReasons: preferenceGateReasons, sessionId: session.sessionId)
         }
 
         if decision.shouldDistillRoutine {
             let routineGateReasons = decision.passedCategories[.routine] ?? []
-            distillRoutine(from: session.turns, gateReasons: routineGateReasons)
+            distillRoutine(from: session.turns, gateReasons: routineGateReasons, sessionId: session.sessionId)
         }
     }
 
@@ -655,6 +781,7 @@ final class CompanionManager: ObservableObject {
     private func distillSkill(
         from turns: [SessionTraceEntry],
         gateReasons: [GateReason],
+        sessionId: UUID? = nil,
         isProactive: Bool = false
     ) {
         let trigger = MemoryGate.makeSkillWriteTrigger(from: turns, gateReasons: gateReasons)
@@ -725,7 +852,7 @@ final class CompanionManager: ObservableObject {
                     targetBundleId: targetBundleId
                 )
 
-                let skill = SkillSynthesizer.buildSkill(
+                var skill = SkillSynthesizer.buildSkill(
                     id: existingSkill?.id ?? metadata.id,
                     name: synthesized.name,
                     description: synthesized.description,
@@ -736,6 +863,16 @@ final class CompanionManager: ObservableObject {
                     primaryQuestion: primaryQuestion,
                     existingSkill: existingSkill
                 )
+
+                let saveReceipt = MemoryReceipt.capture(
+                    category: .skill,
+                    turns: turns,
+                    gateReasons: gateReasons,
+                    sessionId: sessionId,
+                    targetBundleId: targetBundleId,
+                    updatedExistingMemory: existingSkill != nil
+                )
+                skill.receipts = MemoryReceipt.appendReceipt(saveReceipt, to: skill.receipts)
 
                 _ = try teachingSkillStore.saveSkill(skill)
                 SkillCurator.curate(store: teachingSkillStore)
@@ -794,7 +931,8 @@ final class CompanionManager: ObservableObject {
 
     private func distillPreference(
         from turns: [SessionTraceEntry],
-        gateReasons: [GateReason]
+        gateReasons: [GateReason],
+        sessionId: UUID? = nil
     ) {
         let preferenceMatchText = PreferenceSignalDetector.preferenceMatchText(from: turns)
         let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: turns)
@@ -840,7 +978,18 @@ final class CompanionManager: ObservableObject {
 
                 guard !Task.isCancelled else { return }
 
-                let memory = synthesisResult.memory
+                var memory = synthesisResult.memory
+                let saveReceipt = MemoryReceipt.capture(
+                    category: .preference,
+                    turns: turns,
+                    gateReasons: gateReasons,
+                    sessionId: sessionId,
+                    // Global preferences keep a nil scope, but the receipt should
+                    // still record the app the user was in when they said it.
+                    targetBundleId: targetBundleId ?? turns.last?.bundleId,
+                    updatedExistingMemory: synthesisResult.updatedExistingMemory
+                )
+                memory.receipts = MemoryReceipt.appendReceipt(saveReceipt, to: memory.receipts)
                 _ = try auxiliaryMemoryStore.save(memory)
                 syncTeachingSkillsFromStore()
 
@@ -873,7 +1022,8 @@ final class CompanionManager: ObservableObject {
 
     private func distillRoutine(
         from turns: [SessionTraceEntry],
-        gateReasons: [GateReason]
+        gateReasons: [GateReason],
+        sessionId: UUID? = nil
     ) {
         let topic = SkillTriggerEvaluator.deriveTopic(from: turns)
         let targetBundleId = SkillTargetAppResolver.resolveTargetBundleId(
@@ -914,7 +1064,16 @@ final class CompanionManager: ObservableObject {
 
                 guard !Task.isCancelled else { return }
 
-                let memory = synthesisResult.memory
+                var memory = synthesisResult.memory
+                let saveReceipt = MemoryReceipt.capture(
+                    category: .routine,
+                    turns: turns,
+                    gateReasons: gateReasons,
+                    sessionId: sessionId,
+                    targetBundleId: targetBundleId,
+                    updatedExistingMemory: synthesisResult.updatedExistingMemory
+                )
+                memory.receipts = MemoryReceipt.appendReceipt(saveReceipt, to: memory.receipts)
                 _ = try auxiliaryMemoryStore.save(memory)
                 syncTeachingSkillsFromStore()
                 topicHistoryStore.recordTopic(

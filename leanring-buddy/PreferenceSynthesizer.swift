@@ -141,7 +141,10 @@ enum PreferenceSynthesizer {
             status: .active,
             isPinned: existingMemory?.isPinned ?? false,
             usageCount: existingMemory?.usageCount ?? 0,
-            lastUsed: Date()
+            lastUsed: Date(),
+            // Preserve the audit trail across last-write-wins updates: the
+            // caller appends this save's new receipt after synthesis.
+            receipts: existingMemory?.receipts ?? []
         )
 
         return SynthesisResult(memory: memory, updatedExistingMemory: existingMemory != nil)
