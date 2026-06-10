@@ -87,7 +87,22 @@ enum DummyMemorySeeder {
                         triggerPhrase: nil,
                         assistantAnswerSummary: "open source control, check your files, enter a message, and hit commit.",
                         userConfirmedItWorked: false,
-                        updatedExistingMemory: false
+                        updatedExistingMemory: false,
+                        memoryTitleSnapshot: "Commit changes in Xcode",
+                        memorySummarySnapshot: "Stage and commit your current changes via Source Control"
+                    ),
+                    MemoryReceipt(
+                        savedAt: Date().addingTimeInterval(-86400),
+                        sessionId: UUID(),
+                        gateReasons: [.userConfirmed, .repeatedTopic],
+                        appBundleId: "com.apple.dt.Xcode",
+                        userAsk: "remind me how to commit from the menu",
+                        triggerPhrase: "yes that worked, thanks",
+                        assistantAnswerSummary: "use integrate → commit, review the staged files, and confirm.",
+                        userConfirmedItWorked: true,
+                        updatedExistingMemory: true,
+                        memoryTitleSnapshot: "Commit changes in Xcode",
+                        memorySummarySnapshot: "Stage and commit your current changes via Source Control"
                     )
                 ],
                 body: """
@@ -287,7 +302,9 @@ enum DummyMemorySeeder {
                         triggerPhrase: "keep answers short from now on",
                         assistantAnswerSummary: "it awaits the network call and returns the parsed json body.",
                         userConfirmedItWorked: false,
-                        updatedExistingMemory: false
+                        updatedExistingMemory: false,
+                        memoryTitleSnapshot: "Keep answers short",
+                        memorySummarySnapshot: "Short responses by default"
                     ),
                     MemoryReceipt(
                         savedAt: Date().addingTimeInterval(-7200),
@@ -298,7 +315,9 @@ enum DummyMemorySeeder {
                         triggerPhrase: "that's too short, go deeper when explaining code",
                         assistantAnswerSummary: "the error means the task was cancelled before the await finished; check your task group lifecycle.",
                         userConfirmedItWorked: false,
-                        updatedExistingMemory: true
+                        updatedExistingMemory: true,
+                        memoryTitleSnapshot: "Go deeper on code explanations",
+                        memorySummarySnapshot: "Give detailed explanations when discussing code"
                     )
                 ]
             ),
@@ -372,6 +391,19 @@ enum DummyMemorySeeder {
                 lastUsed: Date().addingTimeInterval(-518400),
                 receipts: [
                     MemoryReceipt(
+                        savedAt: Date().addingTimeInterval(-1036800),
+                        sessionId: UUID(),
+                        gateReasons: [.recurringRoutine],
+                        appBundleId: "com.apple.Safari",
+                        userAsk: "walk me through reviewing this pull request",
+                        triggerPhrase: nil,
+                        assistantAnswerSummary: "open the pr, skim the diff in files changed, and approve when it looks good.",
+                        userConfirmedItWorked: false,
+                        updatedExistingMemory: false,
+                        memoryTitleSnapshot: "Review a pull request",
+                        memorySummarySnapshot: "Open GitHub and skim the diff"
+                    ),
+                    MemoryReceipt(
                         savedAt: Date().addingTimeInterval(-518400),
                         sessionId: UUID(),
                         gateReasons: [.recurringRoutine],
@@ -380,7 +412,9 @@ enum DummyMemorySeeder {
                         triggerPhrase: nil,
                         assistantAnswerSummary: "open files changed, scan the diff, comment inline, then approve or request changes.",
                         userConfirmedItWorked: false,
-                        updatedExistingMemory: true
+                        updatedExistingMemory: true,
+                        memoryTitleSnapshot: "Review a pull request",
+                        memorySummarySnapshot: "Open GitHub, read the diff, leave comments"
                     )
                 ]
             )
