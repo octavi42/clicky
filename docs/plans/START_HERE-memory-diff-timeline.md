@@ -8,6 +8,8 @@ Parent roadmap: [START_HERE-roadmap-ideas.md](./START_HERE-roadmap-ideas.md)
 
 Roadmap task **#3 — Implemented 2026-06-10** on this branch, following the recommended Option A (receipts-first + title/summary snapshots on each receipt at capture). Manual library edits still don't append receipts — follow-up slice if needed.
 
+**Demo & test guide:** [memory-diff-timeline-demo.md](./memory-diff-timeline-demo.md) — how to present the feature and step-by-step manual QA.
+
 | # | Task | Status | PR |
 |---|------|--------|-----|
 | 1 | Memory Receipts | **Done** | [#14](https://github.com/octavi42/clicky/pull/14) |
