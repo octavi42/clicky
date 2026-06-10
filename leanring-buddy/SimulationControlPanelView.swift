@@ -19,6 +19,7 @@ import SwiftUI
 
 struct SimulationControlPanelView: View {
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject var simulationDemoEngine: SimulationDemoEngine
 
     var body: some View {
         ScrollView {
@@ -35,6 +36,9 @@ struct SimulationControlPanelView: View {
         }
         .background(DS.Colors.background)
         .frame(minWidth: 860, minHeight: 600)
+        .onAppear {
+            simulationDemoEngine.refreshDemoStateCounts()
+        }
     }
 
     // MARK: - Header
@@ -54,7 +58,7 @@ struct SimulationControlPanelView: View {
             Spacer()
 
             Button(action: {
-                // Demo reset is not wired yet — skeleton placeholder.
+                simulationDemoEngine.resetDemoStateToBaseline()
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.counterclockwise")
@@ -86,12 +90,18 @@ struct SimulationControlPanelView: View {
             sectionTitle("DEMO STATE")
 
             HStack(spacing: DS.Spacing.md) {
-                demoStateTile(title: "Profile", value: "None loaded")
-                demoStateTile(title: "Skills", value: "0")
-                demoStateTile(title: "Preferences", value: "0")
-                demoStateTile(title: "Routines", value: "0")
-                demoStateTile(title: "Simulated App", value: "—")
-                demoStateTile(title: "Last Run", value: "Not run yet")
+                demoStateTile(
+                    title: "Profile",
+                    value: simulationDemoEngine.loadedDemoProfile?.displayName ?? "None loaded"
+                )
+                demoStateTile(title: "Skills", value: String(simulationDemoEngine.demoSkillCount))
+                demoStateTile(title: "Preferences", value: String(simulationDemoEngine.demoPreferenceCount))
+                demoStateTile(title: "Routines", value: String(simulationDemoEngine.demoRoutineMemoryCount))
+                demoStateTile(
+                    title: "Simulated App",
+                    value: simulationDemoEngine.simulatedAppContextDisplayName ?? "—"
+                )
+                demoStateTile(title: "Last Run", value: simulationDemoEngine.lastRunStatusDescription)
             }
         }
     }
@@ -265,31 +275,60 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Demo Profiles
 
-    private static let demoProfileNames = ["Developer", "Creator", "Designer", "Student"]
-
     private var demoProfilesSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.sm) {
             sectionTitle("DEMO PROFILES / WORK STYLES")
 
             HStack(spacing: DS.Spacing.sm) {
-                ForEach(Self.demoProfileNames, id: \.self) { demoProfileName in
-                    demoProfileChip(profileName: demoProfileName)
+                ForEach(SimulationDemoProfile.allCases) { demoProfile in
+                    demoProfileChip(demoProfile)
                 }
 
-                demoProfileChip(profileName: "Clear Profile", isDestructive: true)
+                clearProfileChip
 
                 Spacer()
             }
         }
     }
 
-    private func demoProfileChip(profileName: String, isDestructive: Bool = false) -> some View {
-        Button(action: {
-            // Profile loading is not wired yet — skeleton placeholder.
+    private func demoProfileChip(_ demoProfile: SimulationDemoProfile) -> some View {
+        let isLoadedProfile = simulationDemoEngine.loadedDemoProfile == demoProfile
+
+        return Button(action: {
+            simulationDemoEngine.loadDemoProfile(demoProfile)
         }) {
-            Text(profileName)
+            HStack(spacing: 5) {
+                if isLoadedProfile {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                }
+
+                Text(demoProfile.displayName)
+                    .font(.system(size: 12, weight: isLoadedProfile ? .semibold : .medium))
+            }
+            .foregroundColor(isLoadedProfile ? DS.Colors.textOnAccent : DS.Colors.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isLoadedProfile ? DS.Colors.accent : DS.Colors.surface2)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(isLoadedProfile ? Color.clear : DS.Colors.borderSubtle, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+
+    private var clearProfileChip: some View {
+        Button(action: {
+            simulationDemoEngine.clearLoadedDemoProfile()
+        }) {
+            Text("Clear Profile")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isDestructive ? DS.Colors.destructiveText : DS.Colors.textSecondary)
+                .foregroundColor(DS.Colors.destructiveText)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
                 .background(

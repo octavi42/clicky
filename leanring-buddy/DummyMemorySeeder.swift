@@ -14,9 +14,11 @@ enum DummyMemorySeeder {
         auxiliaryStore: AuxiliaryMemoryStore
     ) {
         #if DEBUG
-        // Skip seeding under E2E so dummy skills never pollute the store the
-        // automated harness asserts against.
-        guard !ClickyE2EConfiguration.isEnabled else { return }
+        // Skip seeding under E2E and skip-setup demo worktrees: both need
+        // deterministic stores. E2E asserts against exact store contents, and
+        // the simulation demo panel resets to a known baseline that dummy
+        // re-seeding on next launch would silently pollute.
+        guard !ClickyE2EConfiguration.shouldSkipSetup else { return }
 
         var seededCount = 0
 

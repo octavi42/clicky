@@ -168,6 +168,14 @@ final class ActivityStore {
         save()
     }
 
+    /// Clears all recorded transitions and suppressions, in memory and on
+    /// disk. Used by the simulation demo engine to reset to a known baseline.
+    func removeAllActivity() {
+        edges = []
+        suppressedEdgeIds = []
+        save()
+    }
+
     private func pruneExpiredEdges(now: Date) {
         let cutoffDate = Calendar.current.date(
             byAdding: .day,

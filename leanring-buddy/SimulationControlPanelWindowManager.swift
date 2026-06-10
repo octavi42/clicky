@@ -64,7 +64,10 @@ final class SimulationControlPanelWindowManager: NSObject {
     }
 
     private func createWindow() {
-        let simulationControlPanelView = SimulationControlPanelView(companionManager: companionManager)
+        let simulationControlPanelView = SimulationControlPanelView(
+            companionManager: companionManager,
+            simulationDemoEngine: companionManager.simulationDemoEngine
+        )
         let hostingView = NSHostingView(rootView: simulationControlPanelView)
 
         let demoWindow = NSWindow(

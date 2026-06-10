@@ -119,6 +119,19 @@ final class CompanionManager: ObservableObject {
 
     private let nicheDiscoveryManager = NicheDiscoveryManager()
     private let activityStore = ActivityStore()
+
+    /// State engine for the presenter-only Clicky Memory Demo window. Shares
+    /// the manager's store instances so demo seeding/reset is immediately
+    /// visible everywhere without cross-instance cache drift.
+    private(set) lazy var simulationDemoEngine: SimulationDemoEngine = {
+        let demoEngine = SimulationDemoEngine(
+            teachingSkillStore: teachingSkillStore,
+            auxiliaryMemoryStore: auxiliaryMemoryStore,
+            activityStore: activityStore
+        )
+        demoEngine.companionManager = self
+        return demoEngine
+    }()
     private var frontmostAppObserver: NSObjectProtocol?
     private var previousFrontmostBundleId: String?
     private var previousFrontmostActivatedAt: Date?
