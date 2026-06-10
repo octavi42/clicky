@@ -168,6 +168,31 @@ final class ActivityStore {
         save()
     }
 
+    /// Removes every recorded transition for one directed app pair, plus any
+    /// suppression entries for the pair in either direction, in memory and on
+    /// disk. Used by the simulation demo engine to forget exactly its own demo
+    /// edge before a run without disturbing other recorded activity.
+    func removeTransitions(fromBundleId: String, toBundleId: String) {
+        let edgeIdToRemove = TransitionEdge.edgeIdentifier(
+            fromBundleId: fromBundleId,
+            toBundleId: toBundleId
+        )
+        let reverseEdgeId = TransitionEdge.edgeIdentifier(
+            fromBundleId: toBundleId,
+            toBundleId: fromBundleId
+        )
+
+        edges.removeAll { edge in
+            edge.id == edgeIdToRemove
+        }
+        // Drop both directions' suppressions so a previously dismissed chip
+        // for this pair can resurface on a fresh demo run.
+        suppressedEdgeIds.remove(edgeIdToRemove)
+        suppressedEdgeIds.remove(reverseEdgeId)
+
+        save()
+    }
+
     /// Clears all recorded transitions and suppressions, in memory and on
     /// disk. Used by the simulation demo engine to reset to a known baseline.
     func removeAllActivity() {

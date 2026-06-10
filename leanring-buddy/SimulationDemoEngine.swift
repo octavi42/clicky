@@ -33,6 +33,7 @@ enum FeatureDemoRunState: Equatable {
 enum FeatureDemoKind: Equatable {
     case skills
     case preferences
+    case routines
 }
 
 /// One conversation beat rendered in the comparison window. A demo run is a
@@ -121,6 +122,17 @@ final class SimulationDemoEngine: ObservableObject {
     @Published private(set) var preferencesDemoPromptIncludedProof: String?
     @Published private(set) var preferencesDemoAnswerLengthProof: String?
 
+    // MARK: Routines demo run state
+
+    @Published private(set) var routinesDemoRunState: FeatureDemoRunState = .notRun
+
+    /// Routines-card proof fields, filled progressively as run steps
+    /// complete. nil renders as an em dash placeholder in the cockpit.
+    @Published private(set) var routinesDemoEdgesSeededProof: String?
+    @Published private(set) var routinesDemoChipShownProof: String?
+    @Published private(set) var routinesDemoChipLabelProof: String?
+    @Published private(set) var routinesDemoAnswerStyleProof: String?
+
     // MARK: Comparison playback state
 
     /// Which feature demo's script currently owns the comparison window.
@@ -161,6 +173,7 @@ final class SimulationDemoEngine: ObservableObject {
         switch activeFeatureDemoKind {
         case .skills: return skillsDemoRunState
         case .preferences: return preferencesDemoRunState
+        case .routines: return routinesDemoRunState
         case nil: return .notRun
         }
     }
@@ -295,6 +308,7 @@ final class SimulationDemoEngine: ObservableObject {
         switch activeFeatureDemoKind {
         case .skills: runSkillsDemo()
         case .preferences: runPreferencesDemo()
+        case .routines: runRoutinesDemo()
         case nil: break
         }
     }
@@ -680,6 +694,241 @@ final class SimulationDemoEngine: ObservableObject {
         ]
     }
 
+    // MARK: - Routines Demo Run
+
+    /// Plays the "Linear → Xcode" routine arc as a before/after conversation
+    /// in the comparison window:
+    ///
+    /// 1. Left column ("Earlier this week") — repeated Linear → Xcode
+    ///    switches are recorded as REAL backdated ActivityStore transitions,
+    ///    day by day. After the first day, the REAL RoutineDetector proves
+    ///    nothing qualifies yet, and the user's "what should I do next?"
+    ///    gets a generic answer.
+    /// 2. Right column ("Today") — one more real switch lands now, the REAL
+    ///    RoutineDetector clears its recurrence bars and produces the chip
+    ///    ("You often open Xcode after Linear"), the real companion panel
+    ///    chips refresh, and the same ask is answered routine-aware with a
+    ///    matched badge.
+    /// 3. A recap strip contrasts the two answers.
+    ///
+    /// Only the conversation text is scripted (the demo must not depend on
+    /// speech or network); the activity recording and recurrence detection
+    /// are the production code paths. This demos the routine CHIP pipeline
+    /// (activity edges → recurrence rules → chip) — it deliberately writes
+    /// no routine Memory, which belongs to the session-distillation
+    /// pipeline. The Linear → Xcode edge is removed up front so every run
+    /// replays the identical arc, even right after loading the Developer
+    /// profile (which seeds that same edge).
+    /// Calling this again (the window's Replay chip) restarts the run.
+    func runRoutinesDemo() {
+        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
+        // allowed — the clear below cancels the other demo's task first.
+        guard !routinesDemoRunState.isRunning else { return }
+
+        clearFeatureDemoRunPresentations()
+        routinesDemoRunState = .running
+
+        featureDemoRunTask = Task { [weak self] in
+            await self?.performRoutinesDemoRun()
+        }
+    }
+
+    private func performRoutinesDemoRun() async {
+        activeFeatureDemoKind = .routines
+        stageDemoTitle = "Routines · Linear → Xcode"
+
+        // Deterministic restart: forget the Linear → Xcode edge (and any
+        // suppression of it) if a previous run or the Developer profile
+        // seeded it. Removal is targeted so other recorded activity — e.g.
+        // another loaded profile's edge — stays intact. The refresh clears
+        // any already-visible chip from the real companion panel, so the
+        // chip appearing mid-run is the payoff.
+        activityStore.removeTransitions(
+            fromBundleId: RoutinesDemoScript.linearBundleId,
+            toBundleId: RoutinesDemoScript.xcodeBundleId
+        )
+        refreshCompanionManagerAfterStoreMutation()
+
+        await playDemoScript(makeRoutinesDemoScript())
+        guard !Task.isCancelled else { return }
+
+        let finishedAtDescription = lastRunTimeFormatter.string(from: Date())
+        routinesDemoRunState = .finished(atTimeDescription: finishedAtDescription)
+        lastRunStatusDescription = "Routines demo · \(finishedAtDescription)"
+    }
+
+    /// The Routines demo as a conversation script. Side effects (activity
+    /// writes, detector runs, proof updates) execute inside the beat
+    /// producers, so each real operation fires exactly when its beat lands
+    /// in its column.
+    private func makeRoutinesDemoScript() -> [DemoScriptStep] {
+        // Shared mutable state between steps. A reference type so closures
+        // created upfront all see values written by earlier steps (the
+        // detector step writes this; the final bubble reads it for its
+        // badge and the recap reads it for its metric).
+        final class RoutinesDemoRunContext {
+            var detectedRoutineChip: RoutineSuggestion?
+        }
+        let runContext = RoutinesDemoRunContext()
+
+        return [
+            // Earlier this week: Clicky quietly watches the user repeat the
+            // same app switch. Each day pill performs real backdated writes.
+            DemoScriptStep(lane: .firstSession) { [self] in
+                recordDemoAppTransitions(
+                    fromBundleId: RoutinesDemoScript.linearBundleId,
+                    toBundleId: RoutinesDemoScript.xcodeBundleId,
+                    transitionCount: RoutinesDemoScript.transitionsSeededPerDay,
+                    daysAgoFromToday: 3
+                )
+                routinesDemoEdgesSeededProof = RoutinesDemoScript.edgesSeededProofDescription(afterSeededDayCount: 1)
+
+                return .systemEvent(
+                    iconSystemName: "arrow.triangle.2.circlepath",
+                    label: RoutinesDemoScript.daySeedPillLabel(dayDescription: "3 days ago"),
+                    detail: "Real transitions recorded in the activity store"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                // Real detector over the live store: proves one day of
+                // recurrence is below the chip's bar (minimum 2 distinct
+                // days), so Clicky stays quiet instead of guessing.
+                let chipAfterOneDay = detectLinearToXcodeRoutineChip()
+                return .systemEvent(
+                    iconSystemName: "magnifyingglass",
+                    label: chipAfterOneDay == nil
+                        ? "No routine chip yet — only 1 distinct day"
+                        : "Unexpected: a routine chip already qualified",
+                    detail: "RoutineDetector ran over the real activity store"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .userSays(text: RoutinesDemoScript.askTranscript)
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .clickyResponds(text: RoutinesDemoScript.genericAnswerResponse, matchedSkillBadge: nil)
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                recordDemoAppTransitions(
+                    fromBundleId: RoutinesDemoScript.linearBundleId,
+                    toBundleId: RoutinesDemoScript.xcodeBundleId,
+                    transitionCount: RoutinesDemoScript.transitionsSeededPerDay,
+                    daysAgoFromToday: 2
+                )
+                routinesDemoEdgesSeededProof = RoutinesDemoScript.edgesSeededProofDescription(afterSeededDayCount: 2)
+
+                return .systemEvent(
+                    iconSystemName: "arrow.triangle.2.circlepath",
+                    label: RoutinesDemoScript.daySeedPillLabel(dayDescription: "2 days ago"),
+                    detail: nil
+                )
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                recordDemoAppTransitions(
+                    fromBundleId: RoutinesDemoScript.linearBundleId,
+                    toBundleId: RoutinesDemoScript.xcodeBundleId,
+                    transitionCount: RoutinesDemoScript.transitionsSeededPerDay,
+                    daysAgoFromToday: 1
+                )
+                routinesDemoEdgesSeededProof = RoutinesDemoScript.edgesSeededProofDescription(
+                    afterSeededDayCount: RoutinesDemoScript.seededDistinctDayCount
+                )
+                lastMemoryWrittenDescription = "Activity edges · Linear → Xcode ×\(RoutinesDemoScript.transitionsSeededPerDay * RoutinesDemoScript.seededDistinctDayCount) over \(RoutinesDemoScript.seededDistinctDayCount) days · \(lastRunTimeFormatter.string(from: Date()))"
+
+                return .systemEvent(
+                    iconSystemName: "arrow.triangle.2.circlepath",
+                    label: RoutinesDemoScript.daySeedPillLabel(dayDescription: "Yesterday"),
+                    detail: nil
+                )
+            },
+
+            // Today: one more real switch tips the pattern over the
+            // recurrence bar. The lane switch wakes up the right column.
+            DemoScriptStep(lane: .secondSession) { [self] in
+                // The live trigger: the simulated user opens Xcode after
+                // Linear right now — one real transition recorded at "now".
+                activityStore.recordTransition(
+                    from: RoutinesDemoScript.linearBundleId,
+                    to: RoutinesDemoScript.xcodeBundleId
+                )
+                simulatedAppContextDisplayName = RoutinesDemoScript.xcodeDisplayName
+
+                return .systemEvent(
+                    iconSystemName: "macwindow",
+                    label: "Today · user opens Xcode after Linear",
+                    detail: "One more real transition, recorded just now"
+                )
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                // Real detector + real panel refresh: proves the recurrence
+                // rules now produce the chip, and pushes it into the actual
+                // companion panel UI.
+                runContext.detectedRoutineChip = detectLinearToXcodeRoutineChip()
+                refreshCompanionManagerAfterStoreMutation()
+
+                let routineChipWasDetected = runContext.detectedRoutineChip != nil
+                routinesDemoChipShownProof = routineChipWasDetected ? "Yes" : "No (unexpected)"
+                routinesDemoChipLabelProof = runContext.detectedRoutineChip?.label
+
+                lastMatchedMemoryDescription = runContext.detectedRoutineChip.map { detectedRoutineChip in
+                    "Routine chip · \(detectedRoutineChip.label)"
+                } ?? "No match"
+
+                return .systemEvent(
+                    iconSystemName: "checkmark.seal",
+                    label: runContext.detectedRoutineChip.map { detectedRoutineChip in
+                        "Routine chip shown · \u{201C}\(detectedRoutineChip.label)\u{201D}"
+                    } ?? "Unexpected: no routine chip detected",
+                    detail: "RoutineDetector ran for real — the chip is live in the companion panel"
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
+                .userSays(text: RoutinesDemoScript.askTranscript)
+            },
+            DemoScriptStep(lane: .secondSession) {
+                .clickyResponds(
+                    text: RoutinesDemoScript.routineAwareAnswerResponse,
+                    // Badge reflects the real detector result from the
+                    // previous step, not a hardcoded claim.
+                    matchedSkillBadge: runContext.detectedRoutineChip != nil
+                        ? "Routine: Linear → Xcode"
+                        : nil
+                )
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                // The chip count metric is real (the detector either produced
+                // the chip or it didn't); the answer-style contrast is
+                // scripted conversation copy, so it stays labeled simulated.
+                let routineChipWasDetected = runContext.detectedRoutineChip != nil
+                routinesDemoAnswerStyleProof = "generic → routine-aware (simulated)"
+                beforeAfterMetricDescription = routineChipWasDetected
+                    ? "Routine chips: 0 → 1 (real recurrence rules)"
+                    : "Routine chips: 0 → 0 (unexpected)"
+                // Side-effect-only step: publishes the recap strip spanning
+                // both columns instead of appending a conversation row.
+                comparisonRecapText = routineChipWasDetected
+                    ? "Same question: generic → routine-aware · chip from real recurrence rules"
+                    : "Same question, but no routine chip qualified (unexpected)"
+                return nil
+            },
+        ]
+    }
+
+    /// Runs the REAL RoutineDetector over the live activity store and returns
+    /// the Linear → Xcode chip if it qualified. Other detected chips (e.g.
+    /// from another loaded profile's edges) are ignored so the demo's proof
+    /// fields always describe this demo's pattern.
+    private func detectLinearToXcodeRoutineChip() -> RoutineSuggestion? {
+        let detectedSuggestions = RoutineDetector.suggestions(
+            from: activityStore.allEdges(),
+            suppressedEdgeIds: activityStore.suppressedEdgeIdentifiers()
+        )
+        return detectedSuggestions.first { detectedSuggestion in
+            detectedSuggestion.fromBundleId == RoutinesDemoScript.linearBundleId
+                && detectedSuggestion.toBundleId == RoutinesDemoScript.xcodeBundleId
+        }
+    }
+
     // MARK: - Demo Script Player
 
     /// Plays a demo script beat by beat: runs the step's real side effects,
@@ -747,6 +996,12 @@ final class SimulationDemoEngine: ObservableObject {
         preferencesDemoPromptIncludedProof = nil
         preferencesDemoAnswerLengthProof = nil
 
+        routinesDemoRunState = .notRun
+        routinesDemoEdgesSeededProof = nil
+        routinesDemoChipShownProof = nil
+        routinesDemoChipLabelProof = nil
+        routinesDemoAnswerStyleProof = nil
+
         activeFeatureDemoKind = nil
         firstSessionLaneBeats = []
         secondSessionLaneBeats = []
@@ -812,6 +1067,34 @@ final class SimulationDemoEngine: ObservableObject {
                     )
                 }
             }
+        }
+    }
+
+    /// Records `transitionCount` real transitions for one app pair on the
+    /// calendar day `daysAgoFromToday` days before today. Timestamps are
+    /// anchored at noon (the same anchoring `seedAppTransitions` uses) so
+    /// they always fall inside ActivityStore's 30-day rolling window and
+    /// never straddle a midnight boundary.
+    private func recordDemoAppTransitions(
+        fromBundleId: String,
+        toBundleId: String,
+        transitionCount: Int,
+        daysAgoFromToday: Int
+    ) {
+        let calendar = Calendar.current
+        let todayAtNoon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
+        guard let transitionDay = calendar.date(
+            byAdding: .day,
+            value: -daysAgoFromToday,
+            to: todayAtNoon
+        ) else { return }
+
+        for _ in 0..<transitionCount {
+            activityStore.recordTransition(
+                from: fromBundleId,
+                to: toBundleId,
+                at: transitionDay
+            )
         }
     }
 
@@ -926,5 +1209,46 @@ private enum PreferencesDemoScript {
             usageCount: 1,
             lastUsed: Date()
         )
+    }
+}
+
+/// The deterministic script behind the Routines demo run. The seeded counts
+/// are chosen to clear RoutineDetector's bars (minimum 2 distinct days,
+/// strength >= 0.4) by the time the right column's live switch lands; the
+/// conversation text is fixed so the demo never depends on speech
+/// recognition or network.
+private enum RoutinesDemoScript {
+    static let linearBundleId = "com.linear"
+    static let xcodeBundleId = "com.apple.dt.Xcode"
+    static let linearDisplayName = "Linear"
+    static let xcodeDisplayName = "Xcode"
+
+    /// 3 transitions × 3 backdated days seeded in the left column, plus the
+    /// right column's live switch "today" = 10 transitions over 4 distinct
+    /// days, comfortably past the detector's recurrence bars.
+    static let transitionsSeededPerDay = 3
+    static let seededDistinctDayCount = 3
+
+    /// The same question is asked in both columns — only the detected
+    /// routine differs between them.
+    static let askTranscript = "What should I do next in this app?"
+
+    // Before: no routine has qualified, so Clicky has to ask for context.
+    static let genericAnswerResponse = "That depends on what you're working on — tell me the task and I can point you to the right place in Xcode."
+
+    // After: the detected Linear → Xcode routine informs the answer.
+    static let routineAwareAnswerResponse = "You usually land in Xcode right after picking a Linear ticket. Pull up that ticket's branch and start there — want me to walk you through your usual first steps?"
+
+    static func daySeedPillLabel(dayDescription: String) -> String {
+        "\(dayDescription) · \(linearDisplayName) → \(xcodeDisplayName) ×\(transitionsSeededPerDay)"
+    }
+
+    /// Cumulative "Activity edges seeded" proof text, computed from the
+    /// script constants so it can never drift from the writes actually
+    /// performed by the day beats.
+    static func edgesSeededProofDescription(afterSeededDayCount seededDayCount: Int) -> String {
+        let transitionTotal = transitionsSeededPerDay * seededDayCount
+        let dayWord = seededDayCount == 1 ? "day" : "days"
+        return "\(transitionTotal) over \(seededDayCount) \(dayWord)"
     }
 }

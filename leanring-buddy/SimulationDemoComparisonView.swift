@@ -14,8 +14,8 @@
 //  - A recap strip spanning both columns lands last.
 //
 //  The view is demo-agnostic: it renders whatever lane beats the engine
-//  publishes. Each feature demo (Skills, Preferences, …) only contributes
-//  its script and per-lane header copy; future cards (Routines, Niche)
+//  publishes. Each feature demo (Skills, Preferences, Routines, …) only
+//  contributes its script and per-lane header copy; future cards (Niche)
 //  reuse it the same way.
 //
 
@@ -94,7 +94,8 @@ struct SimulationDemoComparisonView: View {
 
     /// Column header copy for the demo that owns the window. Each feature
     /// demo frames its before/after contrast differently (skills: a time
-    /// jump; preferences: the same moment with vs without the preference).
+    /// jump; preferences: the same moment with vs without the preference;
+    /// routines: days of quiet observation vs the day the pattern qualifies).
     private var laneHeaderCopy: (
         firstEyebrow: String, firstSubtitle: String,
         secondEyebrow: String, secondSubtitle: String
@@ -106,6 +107,13 @@ struct SimulationDemoComparisonView: View {
                 firstSubtitle: "No style preference saved yet",
                 secondEyebrow: "AFTER",
                 secondSubtitle: "With the saved preference applied"
+            )
+        case .routines:
+            return (
+                firstEyebrow: "EARLIER THIS WEEK",
+                firstSubtitle: "Clicky quietly notices repeated switches",
+                secondEyebrow: "TODAY",
+                secondSubtitle: "The pattern clears the recurrence bar"
             )
         case .skills, nil:
             return (

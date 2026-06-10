@@ -90,6 +90,44 @@ struct ActivityStoreTests {
         }
     }
 
+    @Test func removeTransitionsForgetsOnlyTheTargetedPairAndItsSuppressions() throws {
+        let temporaryHome = try makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: temporaryHome) }
+
+        try ClickyTestHomeIsolation.withIsolatedHome(temporaryHome) {
+            let activityFileURL = temporaryHome.appendingPathComponent("activity.json")
+            let store = ActivityStore(activityFileURL: activityFileURL)
+            let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+            let targetedEdgeId = TransitionEdge.edgeIdentifier(
+                fromBundleId: "com.slack.Slack",
+                toBundleId: "com.figma.Desktop"
+            )
+            let reverseEdgeId = TransitionEdge.edgeIdentifier(
+                fromBundleId: "com.figma.Desktop",
+                toBundleId: "com.slack.Slack"
+            )
+
+            store.recordTransition(from: "com.slack.Slack", to: "com.figma.Desktop", at: timestamp)
+            store.recordTransition(from: "com.apple.mail", to: "com.apple.Notes", at: timestamp)
+            store.suppress(edgeId: targetedEdgeId)
+            store.suppress(edgeId: reverseEdgeId)
+
+            store.removeTransitions(fromBundleId: "com.slack.Slack", toBundleId: "com.figma.Desktop")
+
+            let remainingEdges = store.allEdges(now: timestamp)
+            #expect(remainingEdges.count == 1)
+            #expect(remainingEdges[0].fromBundleId == "com.apple.mail")
+            #expect(!store.isSuppressed(edgeId: targetedEdgeId))
+            #expect(!store.isSuppressed(edgeId: reverseEdgeId))
+
+            // The removal must persist: a reload should not resurrect the edge
+            // or its suppressions.
+            let reloadedStore = ActivityStore(activityFileURL: activityFileURL)
+            #expect(reloadedStore.allEdges(now: timestamp).count == 1)
+            #expect(!reloadedStore.isSuppressed(edgeId: targetedEdgeId))
+        }
+    }
+
     @Test func suppressionPersistsAcrossReload() throws {
         let temporaryHome = try makeTemporaryHome()
         defer { try? FileManager.default.removeItem(at: temporaryHome) }

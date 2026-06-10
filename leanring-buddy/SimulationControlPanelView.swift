@@ -11,10 +11,10 @@
 //  or macOS permissions.
 //
 //  Current state: the demo state strip, demo profile chips, reset, the
-//  Skills feature card (scripted learn-then-reuse run that plays in the
-//  separate before/after comparison window), and the proof panel are wired
-//  to SimulationDemoEngine. The remaining feature cards and the Ask Clicky
-//  quick actions still render placeholder content.
+//  Skills, Preferences, and Routines feature cards (scripted runs that play
+//  in the separate before/after comparison window), and the proof panel are
+//  wired to SimulationDemoEngine. The Niche Suggestions card and the Ask
+//  Clicky quick actions still render placeholder content.
 //
 
 import SwiftUI
@@ -141,31 +141,23 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Feature Demo Cards
 
-    /// Static descriptors for the demo cards that are not wired to the engine
-    /// yet. The Skills and Preferences cards are live and built separately in
-    /// `skillsFeatureDemoCard` / `preferencesFeatureDemoCard`.
-    private static let featureDemoCardPlaceholders: [FeatureDemoCardPlaceholder] = [
-        FeatureDemoCardPlaceholder(
-            categoryLabel: "Routines",
-            scenarioTitle: "Linear → Xcode",
-            iconSystemName: "arrow.triangle.2.circlepath",
-            explanation: "Proves Clicky notices repeated app transitions and surfaces a lightweight routine chip.",
-            proofFieldLabels: [
-                "Activity edges seeded",
-                "Routine chip shown",
-            ]
-        ),
-        FeatureDemoCardPlaceholder(
-            categoryLabel: "Niche Suggestions",
-            scenarioTitle: "Developer + Xcode",
-            iconSystemName: "lightbulb.fill",
-            explanation: "Proves Clicky helps users know what to ask before it has learned much about them.",
-            proofFieldLabels: [
-                "App-aware suggestions shown",
-            ]
-        ),
-    ]
+    /// Static descriptor for the one demo card that is not wired to the
+    /// engine yet. The Skills, Preferences, and Routines cards are live and
+    /// built separately in `skillsFeatureDemoCard` /
+    /// `preferencesFeatureDemoCard` / `routinesFeatureDemoCard`.
+    private static let nicheSuggestionsFeatureDemoCardPlaceholder = FeatureDemoCardPlaceholder(
+        categoryLabel: "Niche Suggestions",
+        scenarioTitle: "Developer + Xcode",
+        iconSystemName: "lightbulb.fill",
+        explanation: "Proves Clicky helps users know what to ask before it has learned much about them.",
+        proofFieldLabels: [
+            "App-aware suggestions shown",
+        ]
+    )
 
+    /// Lays out the cards two per row at equal height. The fixedSize +
+    /// maxHeight pattern stretches the shorter card to match the taller one,
+    /// so Run buttons in the same row always sit on the same baseline.
     private var featureDemoCardsSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.sm) {
             sectionTitle("FEATURE DEMOS")
@@ -179,28 +171,15 @@ struct SimulationControlPanelView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                featureDemoCardRow(
-                    Self.featureDemoCardPlaceholders[0],
-                    Self.featureDemoCardPlaceholders[1]
-                )
+                HStack(alignment: .top, spacing: DS.Spacing.md) {
+                    routinesFeatureDemoCard
+                        .frame(maxHeight: .infinity)
+                    featureDemoCard(Self.nicheSuggestionsFeatureDemoCardPlaceholder)
+                        .frame(maxHeight: .infinity)
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    /// Lays out two cards side by side at equal height. The fixedSize +
-    /// maxHeight pattern stretches the shorter card to match the taller one,
-    /// so Run buttons in the same row always sit on the same baseline.
-    private func featureDemoCardRow(
-        _ leadingFeatureDemoCardPlaceholder: FeatureDemoCardPlaceholder,
-        _ trailingFeatureDemoCardPlaceholder: FeatureDemoCardPlaceholder
-    ) -> some View {
-        HStack(alignment: .top, spacing: DS.Spacing.md) {
-            featureDemoCard(leadingFeatureDemoCardPlaceholder)
-                .frame(maxHeight: .infinity)
-            featureDemoCard(trailingFeatureDemoCardPlaceholder)
-                .frame(maxHeight: .infinity)
-        }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Skills Card (live)
@@ -364,6 +343,92 @@ struct SimulationControlPanelView: View {
                             object: nil
                         )
                         simulationDemoEngine.runPreferencesDemo()
+                    }
+                )
+
+                Spacer()
+            }
+        }
+        .padding(DS.Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .simulationCardSurface()
+    }
+
+    // MARK: - Routines Card (live)
+
+    /// Live Routines card. Run opens the before/after comparison window and
+    /// plays the scripted "Linear → Xcode" arc there, driving the real
+    /// ActivityStore writes and RoutineDetector recurrence rules; the card
+    /// stays a compact dashboard whose proof values stream in as the run
+    /// advances.
+    private var routinesFeatureDemoCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.accentText)
+
+                Text("ROUTINES")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                Spacer()
+
+                demoRunStatusIndicator(for: simulationDemoEngine.routinesDemoRunState)
+            }
+
+            Text("Linear → Xcode")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .padding(.top, 10)
+
+            Text("Proves Clicky notices repeated app transitions and surfaces a lightweight routine chip.")
+                .font(.system(size: 11))
+                .lineSpacing(2)
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
+            Rectangle()
+                .fill(DS.Colors.borderSubtle.opacity(0.5))
+                .frame(height: 0.5)
+                .padding(.top, DS.Spacing.md)
+
+            VStack(spacing: 6) {
+                liveProofFieldRow(
+                    label: "Activity edges seeded",
+                    value: simulationDemoEngine.routinesDemoEdgesSeededProof
+                )
+                liveProofFieldRow(
+                    label: "Routine chip shown",
+                    value: simulationDemoEngine.routinesDemoChipShownProof
+                )
+                liveProofFieldRow(
+                    label: "Chip label",
+                    value: simulationDemoEngine.routinesDemoChipLabelProof
+                )
+                liveProofFieldRow(
+                    label: "Answer style",
+                    value: simulationDemoEngine.routinesDemoAnswerStyleProof
+                )
+            }
+            .padding(.top, DS.Spacing.md)
+
+            Spacer(minLength: DS.Spacing.lg)
+
+            HStack {
+                SimulationControlPanelRunButton(
+                    isRunning: simulationDemoEngine.routinesDemoRunState.isRunning,
+                    action: {
+                        // Surface the comparison window first, then start the
+                        // run so the audience sees the conversation from its
+                        // opening beat.
+                        NotificationCenter.default.post(
+                            name: .clickyOpenSimulationDemoComparisonWindow,
+                            object: nil
+                        )
+                        simulationDemoEngine.runRoutinesDemo()
                     }
                 )
 
