@@ -65,7 +65,7 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "-CLICKY_DEFAULTS_SUITE=clicky-simulation-control-panel"
+            argument = "-CLICKY_DEFAULTS_SUITE=clicky-roadmap-ideas"
             isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
@@ -80,7 +80,7 @@
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "CLICKY_HOME"
-            value = "/tmp/clicky-simulation-control-panel"
+            value = "/tmp/clicky-roadmap-ideas"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

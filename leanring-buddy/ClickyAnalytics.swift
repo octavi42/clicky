@@ -169,6 +169,23 @@ enum ClickyAnalytics {
         ])
     }
 
+    static func trackMemoryReceiptExplained(category: MemoryCategory, memoryID: String, hadReceipt: Bool) {
+        PostHogSDK.shared.capture("memory_receipt_explained", properties: [
+            "category": category.rawValue,
+            "memory_id": memoryID,
+            "had_receipt": hadReceipt
+        ])
+    }
+
+    /// The user asked "what did you learn about me?" — by voice query or the
+    /// Brain tab button — and Clicky spoke a summary of its active memories.
+    static func trackSelfKnowledgeSummarySpoken(trigger: String, activeMemoryCount: Int) {
+        PostHogSDK.shared.capture("self_knowledge_summary_spoken", properties: [
+            "trigger": trigger,
+            "active_memory_count": activeMemoryCount
+        ])
+    }
+
     static func trackTeachingSkillDeleted(skillID: String) {
         PostHogSDK.shared.capture("teaching_skill_deleted", properties: [
             "skill_id": skillID

@@ -27,6 +27,10 @@ struct TeachingSkill: Identifiable, Equatable {
     var confirmedSuccessCount: Int = 0
     var supersededAt: Date?
     var previousBody: String?
+    /// Evidence for why this skill was saved, oldest first. Not serialized into
+    /// SKILL.md (transcript text is fragile inside YAML frontmatter) — the
+    /// store persists receipts as a receipts.json sidecar in the skill folder.
+    var receipts: [MemoryReceipt] = []
     var body: String
 
     struct Metadata: Equatable {
@@ -53,6 +57,11 @@ struct TeachingSkill: Identifiable, Equatable {
 
     var fileURL: URL {
         folderURL.appendingPathComponent("SKILL.md")
+    }
+
+    /// Sidecar file holding this skill's save receipts, next to SKILL.md.
+    var receiptsFileURL: URL {
+        folderURL.appendingPathComponent("receipts.json")
     }
 
     func renderedMarkdown(maxBodyCharacters: Int = 2500) -> String {

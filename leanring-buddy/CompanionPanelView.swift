@@ -37,6 +37,7 @@ struct CompanionPanelView: View {
     @State private var discoveredVaults: [DiscoveredVault] = []
     @State private var copiedSuggestionText: String?
     @State private var selectedPanelTab: CompanionPanelTab = CompanionPanelView.loadSelectedPanelTab()
+    @State private var isHoveringWhatDidYouLearnButton = false
 
     private static let selectedPanelTabUserDefaultsKey = "panelSelectedTab"
 
@@ -386,6 +387,12 @@ struct CompanionPanelView: View {
     }
 
     private func selectPanelTab(_ panelTab: CompanionPanelTab) {
+        // Leaving the Brain tab stops an in-flight "what did you learn about
+        // me?" summary, mirroring how the memories library stops a receipt
+        // explanation when the user navigates away from the memory.
+        if selectedPanelTab == .brain && panelTab != .brain {
+            companionManager.clearSelfKnowledgeSummary()
+        }
         selectedPanelTab = panelTab
         persistSelectedPanelTab()
         notifyPanelLayoutDidChange()
@@ -1228,6 +1235,14 @@ struct CompanionPanelView: View {
             .buttonStyle(.plain)
             .pointerCursor()
             .accessibilityIdentifier("clicky.panel.memories.view-all")
+
+            Divider()
+                .background(DS.Colors.borderSubtle.opacity(0.6))
+                .padding(.horizontal, 12)
+
+            whatDidYouLearnAboutMeButton
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
         }
         .background(
             RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
@@ -1237,6 +1252,43 @@ struct CompanionPanelView: View {
             RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
                 .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
         )
+    }
+
+    /// Asks Clicky to speak a grounded summary of everything it has learned
+    /// about the user — the button twin of the "what did you learn about me?"
+    /// voice query. Styled after the memories library's "Ask Clicky why" button.
+    private var whatDidYouLearnAboutMeButton: some View {
+        let isGeneratingSummary = companionManager.selfKnowledgeSummaryState == .generating
+
+        return Button(action: {
+            companionManager.speakWhatClickyLearnedAboutMe()
+        }) {
+            HStack(spacing: 5) {
+                if isGeneratingSummary {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                Text(isGeneratingSummary ? "Clicky is thinking…" : "What did you learn about me?")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundColor(DS.Colors.textOnAccent)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(DS.Colors.accent.opacity(isHoveringWhatDidYouLearnButton && !isGeneratingSummary ? 0.85 : 1.0))
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .disabled(isGeneratingSummary)
+        .onHover { isHovering in
+            isHoveringWhatDidYouLearnButton = isHovering
+        }
+        .accessibilityIdentifier("clicky.panel.brain.what-did-you-learn")
     }
 
     private var memoriesLibrarySubtitle: String {
