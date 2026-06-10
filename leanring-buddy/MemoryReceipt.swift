@@ -33,9 +33,47 @@ struct MemoryReceipt: Codable, Equatable {
     let userConfirmedItWorked: Bool
     /// Whether this save updated an existing memory rather than creating a new one.
     let updatedExistingMemory: Bool
+    /// The memory's title exactly as this save persisted it. The stores
+    /// overwrite memories in place, so without a snapshot on each receipt the
+    /// previous wording is lost and the diff timeline ("How this changed")
+    /// could not show a Was → Now comparison. Nil on receipts captured before
+    /// the timeline shipped.
+    let memoryTitleSnapshot: String?
+    /// The memory's one-line summary exactly as this save persisted it.
+    /// Fallback diff text for the timeline when the title did not change.
+    let memorySummarySnapshot: String?
 
     var primaryGateReason: GateReason? {
         gateReasons.first
+    }
+
+    // Explicit initializer so the snapshot fields can default to nil: receipts
+    // built outside `capture` (tests, dummy seeds) predate snapshots and should
+    // keep compiling without naming them.
+    init(
+        savedAt: Date,
+        sessionId: UUID?,
+        gateReasons: [GateReason],
+        appBundleId: String?,
+        userAsk: String?,
+        triggerPhrase: String?,
+        assistantAnswerSummary: String?,
+        userConfirmedItWorked: Bool,
+        updatedExistingMemory: Bool,
+        memoryTitleSnapshot: String? = nil,
+        memorySummarySnapshot: String? = nil
+    ) {
+        self.savedAt = savedAt
+        self.sessionId = sessionId
+        self.gateReasons = gateReasons
+        self.appBundleId = appBundleId
+        self.userAsk = userAsk
+        self.triggerPhrase = triggerPhrase
+        self.assistantAnswerSummary = assistantAnswerSummary
+        self.userConfirmedItWorked = userConfirmedItWorked
+        self.updatedExistingMemory = updatedExistingMemory
+        self.memoryTitleSnapshot = memoryTitleSnapshot
+        self.memorySummarySnapshot = memorySummarySnapshot
     }
 
     /// Upper bound on receipts kept per memory. Receipts append on every save,
@@ -45,6 +83,9 @@ struct MemoryReceipt: Codable, Equatable {
     private static let maximumAssistantAnswerSummaryCharacters = 200
 
     /// Builds a receipt from the session turns and gate decision at distill time.
+    /// Pass `memoryTitleSnapshot`/`memorySummarySnapshot` with the memory text
+    /// this save is about to persist so the diff timeline can compare
+    /// consecutive saves later.
     static func capture(
         category: MemoryCategory,
         turns: [SessionTraceEntry],
@@ -52,6 +93,8 @@ struct MemoryReceipt: Codable, Equatable {
         sessionId: UUID?,
         targetBundleId: String?,
         updatedExistingMemory: Bool,
+        memoryTitleSnapshot: String? = nil,
+        memorySummarySnapshot: String? = nil,
         now: Date = Date()
     ) -> MemoryReceipt {
         let userAsk = SkillTriggerEvaluator.primaryTeachingQuestion(from: turns)
@@ -85,7 +128,9 @@ struct MemoryReceipt: Codable, Equatable {
             triggerPhrase: triggerPhrase,
             assistantAnswerSummary: assistantAnswerSummary,
             userConfirmedItWorked: lastConfirmationTranscript(in: turns) != nil,
-            updatedExistingMemory: updatedExistingMemory
+            updatedExistingMemory: updatedExistingMemory,
+            memoryTitleSnapshot: memoryTitleSnapshot,
+            memorySummarySnapshot: memorySummarySnapshot
         )
     }
 
