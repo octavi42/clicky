@@ -135,6 +135,19 @@ final class CompanionManager: ObservableObject {
 
     private let nicheDiscoveryManager = NicheDiscoveryManager()
     private let activityStore = ActivityStore()
+
+    /// State engine for the presenter-only Clicky Memory Demo window. Shares
+    /// the manager's store instances so demo seeding/reset is immediately
+    /// visible everywhere without cross-instance cache drift.
+    private(set) lazy var simulationDemoEngine: SimulationDemoEngine = {
+        let demoEngine = SimulationDemoEngine(
+            teachingSkillStore: teachingSkillStore,
+            auxiliaryMemoryStore: auxiliaryMemoryStore,
+            activityStore: activityStore
+        )
+        demoEngine.companionManager = self
+        return demoEngine
+    }()
     private var frontmostAppObserver: NSObjectProtocol?
     private var previousFrontmostBundleId: String?
     private var previousFrontmostActivatedAt: Date?
@@ -1293,6 +1306,66 @@ final class CompanionManager: ObservableObject {
         nicheDiscoveryManager.clearUserNicheOverride()
         selectedUserNiche = nil
         refreshNicheSuggestions()
+    }
+
+    /// Runs the REAL suggestion-snapshot path with an injected frontmost
+    /// bundle id instead of the actual frontmost app. Used by the presenter
+    /// demo engine so the Niche Suggestions demo can prove the production
+    /// path with a deterministic simulated app context (same injection idea
+    /// as the E2E `e2eFrontmostBundleId` seam).
+    func nicheSuggestionSnapshot(forSimulatedFrontmostBundleId simulatedFrontmostBundleId: String?) -> NicheSuggestionSnapshot {
+        nicheDiscoveryManager.suggestionSnapshot(frontmostBundleId: simulatedFrontmostBundleId)
+    }
+
+    /// Speaks a deterministic demo ask answer through the real Clicky
+    /// overlay + ElevenLabs TTS. Used by the presenter cockpit's Ask Clicky
+    /// quick asks instead of opening the comparison window. Memory reads are
+    /// already done by SimulationDemoEngine before this is called.
+    func speakSimulationDemoAskResponse(
+        spokenText: String,
+        matchedSkillNames: [String] = []
+    ) async {
+        currentResponseTask?.cancel()
+        elevenLabsTTSClient.stopPlayback()
+        transientHideTask?.cancel()
+        transientHideTask = nil
+
+        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+
+        if !isOverlayVisible {
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
+        }
+
+        lastMatchedSkillNames = matchedSkillNames
+        voiceState = .processing
+
+        guard !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            voiceState = .idle
+            lastMatchedSkillNames = []
+            scheduleTransientHideIfNeeded()
+            return
+        }
+
+        do {
+            try await elevenLabsTTSClient.speakText(spokenText)
+            voiceState = .responding
+            while elevenLabsTTSClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                if Task.isCancelled { break }
+            }
+        } catch {
+            ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+            print("⚠️ ElevenLabs TTS error during demo ask: \(error)")
+            speakCreditsErrorFallback()
+        }
+
+        if !Task.isCancelled {
+            voiceState = .idle
+            lastMatchedSkillNames = []
+            scheduleTransientHideIfNeeded()
+        }
     }
 
     func refreshNicheSuggestions() {

@@ -30,6 +30,8 @@ struct leanring_buddyApp: App {
 @MainActor
 final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelManager: MenuBarPanelManager?
+    private var simulationControlPanelWindowManager: SimulationControlPanelWindowManager?
+    private var simulationDemoComparisonWindowManager: SimulationDemoComparisonWindowManager?
     private let companionManager = CompanionManager()
     private var sparkleUpdaterController: SPUStandardUpdaterController?
 
@@ -45,6 +47,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         MacOSScreenshotFloatingThumbnailSuppression.enableForAppLifetime()
 
         menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
+        simulationControlPanelWindowManager = SimulationControlPanelWindowManager(companionManager: companionManager)
+        simulationDemoComparisonWindowManager = SimulationDemoComparisonWindowManager(companionManager: companionManager)
         companionManager.start()
 
         companionManager.runE2EBootstrapActionsIfNeeded()
@@ -52,10 +56,12 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         companionManager.runE2EInjectSequenceIfNeeded()
         // Auto-open the panel if the user still needs to do something:
         // either they haven't onboarded yet, or permissions were revoked.
-        // Skip during headless E2E — the ad-hoc E2E build has a different code
-        // signature than the Xcode Debug app, so TCC checks (accessibility, etc.)
-        // will look "denied" even when the dev build is already approved.
-        if !ClickyE2EConfiguration.isEnabled,
+        // Skip during headless E2E and skip-setup worktree builds — those
+        // builds have a different code signature than the main Xcode Debug
+        // app, so TCC checks (accessibility, etc.) can look "denied" even
+        // when the dev build is already approved, which would force the
+        // setup panel open on every launch.
+        if !ClickyE2EConfiguration.shouldSkipSetup,
            !companionManager.hasCompletedOnboarding || !companionManager.allPermissionsGranted {
             menuBarPanelManager?.showPanelOnLaunch()
         }

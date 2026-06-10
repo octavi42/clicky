@@ -321,12 +321,25 @@ enum NicheAppSuggestionMapping {
         )
     ]
 
+    /// Display names for apps that have no suggestion entry above. Routine
+    /// chip labels resolve names through `appDisplayName`, falling back to an
+    /// NSWorkspace lookup that only works when the app is installed — these
+    /// entries keep labels human-readable (e.g. the demo's Linear → Xcode
+    /// routine) on machines where the app is absent, without affecting
+    /// `appSpecificSuggestions`.
+    private static let displayNameOnlyFallbacksByBundleId: [String: String] = [
+        "com.linear": "Linear",
+    ]
+
     static func appSpecificSuggestions(bundleId: String) -> [NicheSuggestion]? {
         entriesByBundleId[bundleId]?.suggestions
     }
 
     static func appDisplayName(bundleId: String) -> String? {
-        entriesByBundleId[bundleId]?.appDisplayName
+        if let entryDisplayName = entriesByBundleId[bundleId]?.appDisplayName {
+            return entryDisplayName
+        }
+        return displayNameOnlyFallbacksByBundleId[bundleId]
     }
 
     static func contextLabel(bundleId: String) -> String? {
