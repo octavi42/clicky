@@ -142,19 +142,9 @@ struct SimulationControlPanelView: View {
     // MARK: - Feature Demo Cards
 
     /// Static descriptors for the demo cards that are not wired to the engine
-    /// yet. The Skills card is live and built separately in
-    /// `skillsFeatureDemoCard`.
+    /// yet. The Skills and Preferences cards are live and built separately in
+    /// `skillsFeatureDemoCard` / `preferencesFeatureDemoCard`.
     private static let featureDemoCardPlaceholders: [FeatureDemoCardPlaceholder] = [
-        FeatureDemoCardPlaceholder(
-            categoryLabel: "Preferences",
-            scenarioTitle: "Short Answers + Shortcuts",
-            iconSystemName: "slider.horizontal.3",
-            explanation: "Proves Clicky learns how the user wants to be taught and answers in that style.",
-            proofFieldLabels: [
-                "Preference saved",
-                "Answer style applied",
-            ]
-        ),
         FeatureDemoCardPlaceholder(
             categoryLabel: "Routines",
             scenarioTitle: "Linear → Xcode",
@@ -184,14 +174,14 @@ struct SimulationControlPanelView: View {
                 HStack(alignment: .top, spacing: DS.Spacing.md) {
                     skillsFeatureDemoCard
                         .frame(maxHeight: .infinity)
-                    featureDemoCard(Self.featureDemoCardPlaceholders[0])
+                    preferencesFeatureDemoCard
                         .frame(maxHeight: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
                 featureDemoCardRow(
-                    Self.featureDemoCardPlaceholders[1],
-                    Self.featureDemoCardPlaceholders[2]
+                    Self.featureDemoCardPlaceholders[0],
+                    Self.featureDemoCardPlaceholders[1]
                 )
             }
         }
@@ -234,7 +224,7 @@ struct SimulationControlPanelView: View {
 
                 Spacer()
 
-                skillsDemoStatusIndicator
+                demoRunStatusIndicator(for: simulationDemoEngine.skillsDemoRunState)
             }
 
             Text("Xcode Commit Flow")
@@ -299,9 +289,97 @@ struct SimulationControlPanelView: View {
         .simulationCardSurface()
     }
 
+    // MARK: - Preferences Card (live)
+
+    /// Live Preferences card. Run opens the before/after comparison window
+    /// and plays the scripted "Short Answers + Shortcuts" arc there, driving
+    /// the real PreferenceSignalDetector, memory store, and prompt builder;
+    /// the card stays a compact dashboard whose proof values stream in as
+    /// the run advances.
+    private var preferencesFeatureDemoCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.accentText)
+
+                Text("PREFERENCES")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                Spacer()
+
+                demoRunStatusIndicator(for: simulationDemoEngine.preferencesDemoRunState)
+            }
+
+            Text("Short Answers + Shortcuts")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .padding(.top, 10)
+
+            Text("Proves Clicky learns how the user wants to be taught and answers in that style.")
+                .font(.system(size: 11))
+                .lineSpacing(2)
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
+            Rectangle()
+                .fill(DS.Colors.borderSubtle.opacity(0.5))
+                .frame(height: 0.5)
+                .padding(.top, DS.Spacing.md)
+
+            VStack(spacing: 6) {
+                liveProofFieldRow(
+                    label: "Preference signal detected",
+                    value: simulationDemoEngine.preferencesDemoSignalDetectedProof
+                )
+                liveProofFieldRow(
+                    label: "Preference saved",
+                    value: simulationDemoEngine.preferencesDemoSavedPreferenceTitleProof
+                )
+                liveProofFieldRow(
+                    label: "Prompt included preferences",
+                    value: simulationDemoEngine.preferencesDemoPromptIncludedProof
+                )
+                liveProofFieldRow(
+                    label: "Answer length",
+                    value: simulationDemoEngine.preferencesDemoAnswerLengthProof
+                )
+            }
+            .padding(.top, DS.Spacing.md)
+
+            Spacer(minLength: DS.Spacing.lg)
+
+            HStack {
+                SimulationControlPanelRunButton(
+                    isRunning: simulationDemoEngine.preferencesDemoRunState.isRunning,
+                    action: {
+                        // Surface the comparison window first, then start the
+                        // run so the audience sees the conversation from its
+                        // opening beat.
+                        NotificationCenter.default.post(
+                            name: .clickyOpenSimulationDemoComparisonWindow,
+                            object: nil
+                        )
+                        simulationDemoEngine.runPreferencesDemo()
+                    }
+                )
+
+                Spacer()
+            }
+        }
+        .padding(DS.Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .simulationCardSurface()
+    }
+
+    /// Status pill for a live feature card, mapping its engine run state to
+    /// the shared indicator styles.
     @ViewBuilder
-    private var skillsDemoStatusIndicator: some View {
-        switch simulationDemoEngine.skillsDemoRunState {
+    private func demoRunStatusIndicator(for featureDemoRunState: FeatureDemoRunState) -> some View {
+        switch featureDemoRunState {
         case .notRun:
             statusIndicator(text: "Not run")
         case .running:

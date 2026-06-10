@@ -16,8 +16,9 @@
 import Foundation
 import Combine
 
-/// Lifecycle of the scripted Skills demo run shown on the Skills feature card.
-enum SkillsDemoRunState: Equatable {
+/// Lifecycle of a scripted feature demo run, shown as the status dot on its
+/// feature card. Each card owns one of these; a fresh run resets it.
+enum FeatureDemoRunState: Equatable {
     case notRun
     case running
     case finished(atTimeDescription: String)
@@ -25,6 +26,13 @@ enum SkillsDemoRunState: Equatable {
     var isRunning: Bool {
         self == .running
     }
+}
+
+/// Which feature demo a run belongs to. The comparison window uses this to
+/// pick its lane headers and to restart the right script on Replay.
+enum FeatureDemoKind: Equatable {
+    case skills
+    case preferences
 }
 
 /// One conversation beat rendered in the comparison window. A demo run is a
@@ -93,7 +101,7 @@ final class SimulationDemoEngine: ObservableObject {
 
     // MARK: Skills demo run state
 
-    @Published private(set) var skillsDemoRunState: SkillsDemoRunState = .notRun
+    @Published private(set) var skillsDemoRunState: FeatureDemoRunState = .notRun
 
     /// Skills-card proof fields, filled progressively as run steps complete.
     /// nil renders as an em dash placeholder in the cockpit.
@@ -102,7 +110,22 @@ final class SimulationDemoEngine: ObservableObject {
     @Published private(set) var skillsDemoPromptIncludedProof: String?
     @Published private(set) var skillsDemoTurnsToSuccessProof: String?
 
+    // MARK: Preferences demo run state
+
+    @Published private(set) var preferencesDemoRunState: FeatureDemoRunState = .notRun
+
+    /// Preferences-card proof fields, filled progressively as run steps
+    /// complete. nil renders as an em dash placeholder in the cockpit.
+    @Published private(set) var preferencesDemoSignalDetectedProof: String?
+    @Published private(set) var preferencesDemoSavedPreferenceTitleProof: String?
+    @Published private(set) var preferencesDemoPromptIncludedProof: String?
+    @Published private(set) var preferencesDemoAnswerLengthProof: String?
+
     // MARK: Comparison playback state
+
+    /// Which feature demo's script currently owns the comparison window.
+    /// Drives the window's lane headers and what Replay restarts.
+    @Published private(set) var activeFeatureDemoKind: FeatureDemoKind?
 
     /// Beats played so far in the left "first time" column, appended one at
     /// a time with pacing.
@@ -128,7 +151,19 @@ final class SimulationDemoEngine: ObservableObject {
     @Published private(set) var promptSectionsIncludedDescription: String = "—"
     @Published private(set) var beforeAfterMetricDescription: String = "—"
 
-    private var skillsDemoRunTask: Task<Void, Never>?
+    /// One task drives whichever feature demo is currently playing — demos
+    /// share the comparison window, so two can never play at once.
+    private var featureDemoRunTask: Task<Void, Never>?
+
+    /// Run state of whichever demo owns the comparison window right now.
+    /// Used by the window's Replay chip.
+    var activeFeatureDemoRunState: FeatureDemoRunState {
+        switch activeFeatureDemoKind {
+        case .skills: return skillsDemoRunState
+        case .preferences: return preferencesDemoRunState
+        case nil: return .notRun
+        }
+    }
 
     private let teachingSkillStore: TeachingSkillStore
     private let auxiliaryMemoryStore: AuxiliaryMemoryStore
@@ -165,7 +200,7 @@ final class SimulationDemoEngine: ObservableObject {
         wipeAllStores()
         loadedDemoProfile = nil
         simulatedAppContextDisplayName = nil
-        clearSkillsDemoRunPresentation()
+        clearFeatureDemoRunPresentations()
         clearProofPanel()
         refreshCompanionManagerAfterStoreMutation()
         companionManager?.clearUserNicheOverride()
@@ -178,7 +213,7 @@ final class SimulationDemoEngine: ObservableObject {
     /// depends on what was in the stores before.
     func loadDemoProfile(_ demoProfile: SimulationDemoProfile) {
         wipeAllStores()
-        clearSkillsDemoRunPresentation()
+        clearFeatureDemoRunPresentations()
         clearProofPanel()
 
         for demoSkill in demoProfile.demoSkills {
@@ -242,17 +277,30 @@ final class SimulationDemoEngine: ObservableObject {
     /// loading the Developer profile (which seeds that same skill).
     /// Calling this again (the window's Replay chip) restarts the run.
     func runSkillsDemo() {
+        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
+        // allowed — the clear below cancels the other demo's task first.
         guard !skillsDemoRunState.isRunning else { return }
 
-        clearSkillsDemoRunPresentation()
+        clearFeatureDemoRunPresentations()
         skillsDemoRunState = .running
 
-        skillsDemoRunTask = Task { [weak self] in
+        featureDemoRunTask = Task { [weak self] in
             await self?.performSkillsDemoRun()
         }
     }
 
+    /// Restarts whichever demo currently owns the comparison window. Wired
+    /// to the window's Replay chip.
+    func replayActiveFeatureDemo() {
+        switch activeFeatureDemoKind {
+        case .skills: runSkillsDemo()
+        case .preferences: runPreferencesDemo()
+        case nil: break
+        }
+    }
+
     private func performSkillsDemoRun() async {
+        activeFeatureDemoKind = .skills
         stageDemoTitle = "Skills · Xcode Commit Flow"
 
         // Deterministic restart: forget the commit skill if a previous run or
@@ -411,6 +459,227 @@ final class SimulationDemoEngine: ObservableObject {
         ]
     }
 
+    // MARK: - Preferences Demo Run
+
+    /// Plays the "Short Answers + Shortcuts" arc as a before/after
+    /// conversation in the comparison window:
+    ///
+    /// 1. Left column ("Before") — a screen-help question gets a verbose,
+    ///    menu-path answer. The user then states the preference; the REAL
+    ///    PreferenceSignalDetector recognizes it and a REAL preference
+    ///    memory is written to AuxiliaryMemoryStore (save pill, Brain tab
+    ///    and the Preferences count tile show it).
+    /// 2. Right column ("After") — the exact same question. The REAL
+    ///    TeachingPromptBuilder injects the saved preference into the
+    ///    prompt's `user preferences:` section, and Clicky answers in one
+    ///    short shortcut-first line with an applied badge.
+    /// 3. A recap strip compares the two answer lengths.
+    ///
+    /// Only the conversation text is scripted (the demo must not depend on
+    /// speech or network); the signal detection, store write, and prompt
+    /// assembly are the production code paths. The demo preference (and the
+    /// Developer profile's two overlapping style preferences) are deleted up
+    /// front so the "before" state is honest on every run.
+    /// Calling this again (the window's Replay chip) restarts the run.
+    func runPreferencesDemo() {
+        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
+        // allowed — the clear below cancels the other demo's task first.
+        guard !preferencesDemoRunState.isRunning else { return }
+
+        clearFeatureDemoRunPresentations()
+        preferencesDemoRunState = .running
+
+        featureDemoRunTask = Task { [weak self] in
+            await self?.performPreferencesDemoRun()
+        }
+    }
+
+    private func performPreferencesDemoRun() async {
+        activeFeatureDemoKind = .preferences
+        stageDemoTitle = "Preferences · Short Answers + Shortcuts"
+
+        // Deterministic restart: forget the demo preference if a previous
+        // run wrote it, and the Developer profile's two style preferences —
+        // they state the same preference, which would make the verbose
+        // "before" answer dishonest right after loading that profile.
+        let preferenceIdsToForget = [
+            PreferencesDemoScript.shortAnswersPreferenceId,
+            "demo-pref-short-answers",
+            "demo-pref-keyboard-shortcuts",
+        ]
+        var deletedAnySeededPreference = false
+        for preferenceId in preferenceIdsToForget where auxiliaryMemoryStore.memory(withID: preferenceId) != nil {
+            try? auxiliaryMemoryStore.delete(id: preferenceId)
+            deletedAnySeededPreference = true
+        }
+        if deletedAnySeededPreference {
+            refreshCompanionManagerAfterStoreMutation()
+            refreshDemoStateCounts()
+        }
+
+        await playDemoScript(makePreferencesDemoScript())
+        guard !Task.isCancelled else { return }
+
+        let finishedAtDescription = lastRunTimeFormatter.string(from: Date())
+        preferencesDemoRunState = .finished(atTimeDescription: finishedAtDescription)
+        lastRunStatusDescription = "Preferences demo · \(finishedAtDescription)"
+    }
+
+    /// The Preferences demo as a conversation script. Side effects (signal
+    /// detection, the preference write, prompt build, proof updates) execute
+    /// inside the beat producers, so each real operation fires exactly when
+    /// its beat lands in its column.
+    private func makePreferencesDemoScript() -> [DemoScriptStep] {
+        // Shared mutable state between steps. A reference type so closures
+        // created upfront all see values written by earlier steps (the
+        // prompt-build step writes this; the final bubble reads it for its
+        // applied badge).
+        final class PreferencesDemoRunContext {
+            var savedPreferenceWasInjectedIntoPrompt = false
+        }
+        let runContext = PreferencesDemoRunContext()
+
+        return [
+            // Before: a normal screen-help question, answered verbosely
+            // because no style preference exists yet.
+            DemoScriptStep(lane: .firstSession) {
+                .userSays(text: PreferencesDemoScript.screenHelpQuestionTranscript)
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .clickyResponds(text: PreferencesDemoScript.verboseAnswerResponse, matchedSkillBadge: nil)
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .userSays(text: PreferencesDemoScript.statedPreferenceTranscript)
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                // Real detector over the scripted statement: this is the same
+                // deterministic gate the production memory pipeline uses to
+                // decide a session contained a stated preference.
+                let statementRegisteredAsPreferenceSignal =
+                    PreferenceSignalDetector.containsAnyPreferenceSignal(
+                        in: PreferencesDemoScript.statedPreferenceTranscript
+                    )
+
+                preferencesDemoSignalDetectedProof =
+                    statementRegisteredAsPreferenceSignal ? "Yes" : "No (unexpected)"
+
+                return .systemEvent(
+                    iconSystemName: "waveform.and.magnifyingglass",
+                    label: statementRegisteredAsPreferenceSignal
+                        ? "Preference signal detected"
+                        : "Unexpected: no preference signal detected",
+                    detail: "PreferenceSignalDetector ran for real"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                // Real store write — the preference is on disk from this
+                // beat on.
+                let freshlySavedPreference = PreferencesDemoScript.makeShortAnswersPreferenceMemory()
+                do {
+                    try auxiliaryMemoryStore.save(freshlySavedPreference)
+                } catch {
+                    print("⚠️ Preferences demo failed to save the preference: \(error)")
+                }
+                refreshCompanionManagerAfterStoreMutation()
+                refreshDemoStateCounts()
+
+                preferencesDemoSavedPreferenceTitleProof = freshlySavedPreference.title
+                lastMemoryWrittenDescription = "Preference · \(freshlySavedPreference.title) · \(lastRunTimeFormatter.string(from: Date()))"
+
+                return .systemEvent(
+                    iconSystemName: "brain",
+                    label: "Preference saved · \(freshlySavedPreference.title)",
+                    detail: "Real write to the memory store — open the Brain tab to see it"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .clickyResponds(text: PreferencesDemoScript.preferenceAcknowledgement, matchedSkillBadge: nil)
+            },
+
+            // After: the exact same question, now answered through the
+            // saved preference. The lane switch wakes up the right column.
+            DemoScriptStep(lane: .secondSession) {
+                .userSays(text: PreferencesDemoScript.screenHelpQuestionTranscript)
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                // Real prompt assembly: collect active preferences with the
+                // same filter the production voice pipeline applies
+                // (CompanionManager.activePreferences is private), then
+                // prove TeachingPromptBuilder injects the section.
+                let activePreferencesForPrompt = Array(
+                    auxiliaryMemoryStore.memories(for: .preference)
+                        .filter { preferenceMemory in
+                            guard preferenceMemory.status == .active else { return false }
+                            if preferenceMemory.bundleIds.isEmpty { return true }
+                            return preferenceMemory.bundleIds.contains(PreferencesDemoScript.xcodeBundleId)
+                        }
+                        .prefix(3)
+                )
+
+                let savedPreferenceIsActive = activePreferencesForPrompt.contains { preferenceMemory in
+                    preferenceMemory.id == PreferencesDemoScript.shortAnswersPreferenceId
+                }
+
+                let voicePromptWithPreferences = TeachingPromptBuilder.buildVoiceResponsePrompt(
+                    basePrompt: PreferencesDemoScript.demoBasePrompt,
+                    matchedSkills: [],
+                    activePreferences: activePreferencesForPrompt
+                )
+                let promptIncludedPreferencesSection =
+                    voicePromptWithPreferences.contains("user preferences:")
+
+                runContext.savedPreferenceWasInjectedIntoPrompt =
+                    savedPreferenceIsActive && promptIncludedPreferencesSection
+
+                preferencesDemoPromptIncludedProof =
+                    runContext.savedPreferenceWasInjectedIntoPrompt ? "Yes" : "No"
+
+                lastMatchedMemoryDescription = savedPreferenceIsActive
+                    ? "Preference · \(PreferencesDemoScript.shortAnswersPreferenceTitle) (active)"
+                    : "No match"
+                promptSectionsIncludedDescription = promptIncludedPreferencesSection
+                    ? "base + user preferences"
+                    : "base only"
+
+                return .systemEvent(
+                    iconSystemName: "checkmark.seal",
+                    label: runContext.savedPreferenceWasInjectedIntoPrompt
+                        ? "Preference injected into the prompt"
+                        : "Unexpected: the saved preference was not injected",
+                    detail: "TeachingPromptBuilder ran for real"
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
+                .clickyResponds(
+                    text: PreferencesDemoScript.shortAnswerResponse,
+                    // Badge reflects the real prompt-build result from the
+                    // previous step, not a hardcoded claim.
+                    matchedSkillBadge: runContext.savedPreferenceWasInjectedIntoPrompt
+                        ? "Preference applied: short + shortcuts"
+                        : nil
+                )
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                // Word counts are computed from the script constants so the
+                // recap can never drift from the copy actually shown above.
+                let verboseAnswerWordCount = PreferencesDemoScript.wordCount(
+                    of: PreferencesDemoScript.verboseAnswerResponse
+                )
+                let shortAnswerWordCount = PreferencesDemoScript.wordCount(
+                    of: PreferencesDemoScript.shortAnswerResponse
+                )
+
+                preferencesDemoAnswerLengthProof =
+                    "\(verboseAnswerWordCount) → \(shortAnswerWordCount) words (simulated)"
+                beforeAfterMetricDescription =
+                    "Answer length: \(verboseAnswerWordCount) → \(shortAnswerWordCount) words (simulated demo metric)"
+                comparisonRecapText =
+                    "Same question: \(verboseAnswerWordCount) words → \(shortAnswerWordCount) words (simulated demo metric)"
+                return nil
+            },
+        ]
+    }
+
     // MARK: - Demo Script Player
 
     /// Plays a demo script beat by beat: runs the step's real side effects,
@@ -430,14 +699,14 @@ final class SimulationDemoEngine: ObservableObject {
 
             if beat.showsTypingIndicatorFirst {
                 clickyTypingLane = demoScriptStep.lane
-                await pause(nanoseconds: SkillsDemoScript.typingIndicatorNanoseconds)
+                await pause(nanoseconds: DemoScriptPacing.typingIndicatorNanoseconds)
                 clickyTypingLane = nil
                 guard !Task.isCancelled else { return }
             }
 
             appendBeat(beat, to: demoScriptStep.lane)
 
-            await pause(nanoseconds: SkillsDemoScript.pacingAfterBeatNanoseconds)
+            await pause(nanoseconds: DemoScriptPacing.pacingAfterBeatNanoseconds)
         }
     }
 
@@ -459,14 +728,26 @@ final class SimulationDemoEngine: ObservableObject {
         try? await Task.sleep(nanoseconds: nanoseconds)
     }
 
-    private func clearSkillsDemoRunPresentation() {
-        skillsDemoRunTask?.cancel()
-        skillsDemoRunTask = nil
+    /// Cancels any in-flight run and clears both cards' run state/proofs
+    /// plus the shared comparison playback. Cleared together because the
+    /// demos share one window: starting demo B while demo A plays cancels A.
+    private func clearFeatureDemoRunPresentations() {
+        featureDemoRunTask?.cancel()
+        featureDemoRunTask = nil
+
         skillsDemoRunState = .notRun
         skillsDemoSavedSkillNameProof = nil
         skillsDemoSkillMatchedProof = nil
         skillsDemoPromptIncludedProof = nil
         skillsDemoTurnsToSuccessProof = nil
+
+        preferencesDemoRunState = .notRun
+        preferencesDemoSignalDetectedProof = nil
+        preferencesDemoSavedPreferenceTitleProof = nil
+        preferencesDemoPromptIncludedProof = nil
+        preferencesDemoAnswerLengthProof = nil
+
+        activeFeatureDemoKind = nil
         firstSessionLaneBeats = []
         secondSessionLaneBeats = []
         clickyTypingLane = nil
@@ -542,6 +823,15 @@ final class SimulationDemoEngine: ObservableObject {
     }
 }
 
+/// Shared playback pacing for every demo script, tuned so a presenter can
+/// narrate between beats.
+private enum DemoScriptPacing {
+    /// How long Clicky's typing indicator shows before each of its bubbles.
+    static let typingIndicatorNanoseconds: UInt64 = 900_000_000
+    /// Pause after each beat lands, so the presenter can narrate.
+    static let pacingAfterBeatNanoseconds: UInt64 = 1_100_000_000
+}
+
 /// The deterministic script behind the Skills demo run. All conversation
 /// text is fixed so the demo never depends on speech recognition or network;
 /// only the store write, matching, and prompt assembly are live.
@@ -566,11 +856,6 @@ private enum SkillsDemoScript {
     /// section, which works identically regardless of the base prompt text.
     static let demoBasePrompt = "you are clicky, a voice screen tutor. answer briefly."
 
-    /// How long Clicky's typing indicator shows before each of its bubbles.
-    static let typingIndicatorNanoseconds: UInt64 = 900_000_000
-    /// Pause after each beat lands, so the presenter can narrate.
-    static let pacingAfterBeatNanoseconds: UInt64 = 1_100_000_000
-
     static func makeFreshlyLearnedXcodeCommitSkill() -> TeachingSkill {
         TeachingSkill(
             id: commitSkillId,
@@ -588,6 +873,58 @@ private enum SkillsDemoScript {
             2. Review changed files and check the ones to include.
             3. Enter a commit message and press **⌘⏎** to commit.
             """
+        )
+    }
+}
+
+/// The deterministic script behind the Preferences demo run. The stated
+/// preference deliberately contains two detector phrases ("from now on",
+/// "keep answers short") so the REAL PreferenceSignalDetector fires on it;
+/// the rest of the conversation text is fixed so the demo never depends on
+/// speech recognition or network.
+private enum PreferencesDemoScript {
+    static let shortAnswersPreferenceId = "demo-preference-short-shortcuts"
+    static let shortAnswersPreferenceTitle = "Short answers, shortcuts first"
+    static let xcodeBundleId = "com.apple.dt.Xcode"
+
+    /// The same question is asked in both columns — only the saved
+    /// preference differs between them.
+    static let screenHelpQuestionTranscript = "How do I add a new file to my Xcode project?"
+
+    // Before: no style preference exists, so the answer is long and
+    // menu-path-first.
+    static let verboseAnswerResponse = "There are a couple of ways to do this. In the menu bar, go to File, then New, then choose File from Template. A sheet appears where you pick a template, for example Swift File, then click Next, choose where to save it in the project navigator, make sure the right target is checked under Targets, and finally click Create."
+
+    static let statedPreferenceTranscript = "From now on, keep answers short and lead with the keyboard shortcut."
+    static let preferenceAcknowledgement = "Got it — short answers, shortcuts first. Saved."
+
+    // After: the same question through the saved preference.
+    static let shortAnswerResponse = "⌘N, pick your template, hit ⏎. Done."
+
+    /// Short stand-in for the production voice system prompt. The proof is
+    /// about whether TeachingPromptBuilder appends the user-preferences
+    /// section, which works identically regardless of the base prompt text.
+    static let demoBasePrompt = "you are clicky, a voice screen tutor."
+
+    /// Recap word counts are computed from the script constants at run time
+    /// so they can never drift from the copy actually shown in the bubbles.
+    static func wordCount(of text: String) -> Int {
+        text.split(whereSeparator: \.isWhitespace).count
+    }
+
+    static func makeShortAnswersPreferenceMemory() -> Memory {
+        Memory(
+            id: shortAnswersPreferenceId,
+            category: .preference,
+            title: shortAnswersPreferenceTitle,
+            summary: "Keep responses brief and lead with the keyboard shortcut",
+            body: """
+            Answer in one or two short sentences. When a task has a keyboard
+            shortcut, give the shortcut first; mention the menu path only if
+            the user asks for it.
+            """,
+            usageCount: 1,
+            lastUsed: Date()
         )
     }
 }

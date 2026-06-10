@@ -7,15 +7,16 @@
 //  feature card in the cockpit opens this window and plays the demo's
 //  scripted conversation into two side-by-side columns:
 //
-//  - Left "FIRST TIME": the user asks before Clicky has learned anything —
-//    the full multi-turn teaching session plays beat by beat.
-//  - Right "NEXT DAY": stays in a dimmed waiting state until the first
-//    session ends, then the one-turn matched re-ask plays in it.
+//  - Left column: the "before" session — the user asks before Clicky has
+//    learned anything, playing beat by beat.
+//  - Right column: stays in a dimmed waiting state until the first session
+//    ends, then the informed "after" session plays in it.
 //  - A recap strip spanning both columns lands last.
 //
 //  The view is demo-agnostic: it renders whatever lane beats the engine
-//  publishes, so future feature cards (Preferences, Routines, Niche) reuse
-//  it by declaring their own scripts.
+//  publishes. Each feature demo (Skills, Preferences, …) only contributes
+//  its script and per-lane header copy; future cards (Routines, Niche)
+//  reuse it the same way.
 //
 
 import SwiftUI
@@ -70,14 +71,14 @@ struct SimulationDemoComparisonView: View {
 
             Spacer()
 
-            // Replay restarts the same run; today only the Skills demo plays
-            // here, so the chip maps directly to it.
-            if case .finished = simulationDemoEngine.skillsDemoRunState {
+            // Replay restarts whichever demo currently owns the window —
+            // the engine knows which script that is.
+            if case .finished = simulationDemoEngine.activeFeatureDemoRunState {
                 SimulationControlPanelChipButton(
                     title: "Replay",
                     iconSystemName: "arrow.counterclockwise",
                     action: {
-                        simulationDemoEngine.runSkillsDemo()
+                        simulationDemoEngine.replayActiveFeatureDemo()
                     }
                 )
             }
@@ -91,19 +92,44 @@ struct SimulationDemoComparisonView: View {
 
     // MARK: - Lane Columns
 
+    /// Column header copy for the demo that owns the window. Each feature
+    /// demo frames its before/after contrast differently (skills: a time
+    /// jump; preferences: the same moment with vs without the preference).
+    private var laneHeaderCopy: (
+        firstEyebrow: String, firstSubtitle: String,
+        secondEyebrow: String, secondSubtitle: String
+    ) {
+        switch simulationDemoEngine.activeFeatureDemoKind {
+        case .preferences:
+            return (
+                firstEyebrow: "BEFORE",
+                firstSubtitle: "No style preference saved yet",
+                secondEyebrow: "AFTER",
+                secondSubtitle: "With the saved preference applied"
+            )
+        case .skills, nil:
+            return (
+                firstEyebrow: "FIRST TIME",
+                firstSubtitle: "Clicky hasn't learned this yet",
+                secondEyebrow: "NEXT DAY",
+                secondSubtitle: "With the saved skill in memory"
+            )
+        }
+    }
+
     private var comparisonLaneColumns: some View {
         HStack(alignment: .top, spacing: DS.Spacing.lg) {
             comparisonLaneColumn(
                 lane: .firstSession,
-                eyebrowLabel: "FIRST TIME",
-                subtitle: "Clicky hasn't learned this yet",
+                eyebrowLabel: laneHeaderCopy.firstEyebrow,
+                subtitle: laneHeaderCopy.firstSubtitle,
                 laneBeats: simulationDemoEngine.firstSessionLaneBeats
             )
 
             comparisonLaneColumn(
                 lane: .secondSession,
-                eyebrowLabel: "NEXT DAY",
-                subtitle: "With the saved skill in memory",
+                eyebrowLabel: laneHeaderCopy.secondEyebrow,
+                subtitle: laneHeaderCopy.secondSubtitle,
                 laneBeats: simulationDemoEngine.secondSessionLaneBeats
             )
         }
