@@ -37,6 +37,29 @@ enum FeatureDemoKind: Equatable {
     case nicheSuggestions
 }
 
+/// The three presenter quick asks in the cockpit's Ask Clicky section. Each
+/// is answered read-only from whatever demo state is currently loaded, then
+/// spoken aloud by the real Clicky overlay (no comparison window). Asks
+/// recall, match, and prompt-build over the live stores but never write to
+/// them, so asking never changes the loaded demo state.
+enum AskClickyQuickAction: String, CaseIterable, Identifiable, Equatable {
+    case whatDidYouLearnAboutMe
+    case helpMeCommitInXcodeAgain
+    case whatShouldIDoNextInThisApp
+
+    var id: String { rawValue }
+
+    /// The ask exactly as the simulated user "speaks" it. Also the chip
+    /// title in the cockpit and the user bubble text in the run.
+    var promptText: String {
+        switch self {
+        case .whatDidYouLearnAboutMe: return "What did you learn about me?"
+        case .helpMeCommitInXcodeAgain: return "Help me commit in Xcode again"
+        case .whatShouldIDoNextInThisApp: return "What should I do next in this app?"
+        }
+    }
+}
+
 /// One conversation beat rendered in the comparison window. A demo run is a
 /// paced sequence of these; the view renders each kind differently (user
 /// bubble, Clicky bubble, system pill).
@@ -144,6 +167,16 @@ final class SimulationDemoEngine: ObservableObject {
     @Published private(set) var nicheSuggestionsDemoSimulatedFrontmostAppProof: String?
     @Published private(set) var nicheSuggestionsDemoSuggestionModeProof: String?
     @Published private(set) var nicheSuggestionsDemoSuggestionsShownProof: String?
+
+    // MARK: Ask Clicky quick action run state
+
+    /// One lifecycle shared by all three quick asks — asks play one at a
+    /// time, so a single state is enough for re-press guarding.
+    @Published private(set) var askClickyRunState: FeatureDemoRunState = .notRun
+
+    /// Which quick ask currently owns `askClickyRunState`, used to ignore
+    /// re-presses of the same chip while it is still speaking.
+    private var activeAskClickyQuickAction: AskClickyQuickAction?
 
     // MARK: Comparison playback state
 
@@ -1133,6 +1166,191 @@ final class SimulationDemoEngine: ObservableObject {
         ]
     }
 
+    // MARK: - Ask Clicky Quick Action Runs
+
+    /// Answers one Ask Clicky quick ask from the current demo state, then
+    /// has the real Clicky overlay speak it aloud via ElevenLabs TTS. The
+    /// memory reads / matchers are real and read-only; only the spoken copy
+    /// is scripted. Unlike the feature demos, asks never write to the
+    /// stores and never open the comparison window.
+    func runAskClickyQuickAction(_ quickAction: AskClickyQuickAction) {
+        // Re-pressing the SAME ask mid-run is ignored; starting a different
+        // ask (or a feature demo) is allowed — the clear below cancels the
+        // in-flight run's task first.
+        let thisQuickActionIsAlreadyRunning = askClickyRunState.isRunning
+            && activeAskClickyQuickAction == quickAction
+        guard !thisQuickActionIsAlreadyRunning else { return }
+
+        clearFeatureDemoRunPresentations()
+        askClickyRunState = .running
+        activeAskClickyQuickAction = quickAction
+
+        featureDemoRunTask = Task { [weak self] in
+            await self?.performAskClickyQuickActionRun(quickAction)
+        }
+    }
+
+    private func performAskClickyQuickActionRun(_ quickAction: AskClickyQuickAction) async {
+        let computedAskResult = computeAskClickyResult(for: quickAction)
+
+        lastMatchedMemoryDescription = computedAskResult.lastMatchedMemoryDescription
+        promptSectionsIncludedDescription = computedAskResult.promptSectionsIncludedDescription
+        beforeAfterMetricDescription = computedAskResult.beforeAfterMetricDescription
+
+        await companionManager?.speakSimulationDemoAskResponse(
+            spokenText: computedAskResult.spokenText,
+            matchedSkillNames: computedAskResult.matchedSkillNames
+        )
+        guard !Task.isCancelled else { return }
+
+        let finishedAtDescription = lastRunTimeFormatter.string(from: Date())
+        askClickyRunState = .finished(atTimeDescription: finishedAtDescription)
+        lastRunStatusDescription = "Ask Clicky · \(finishedAtDescription)"
+        activeAskClickyQuickAction = nil
+    }
+
+    /// Read-only answer assembly for one Ask Clicky quick ask. Each branch
+    /// runs the same production matchers the voice pipeline uses, then
+    /// builds speakable copy from the real results.
+    private func computeAskClickyResult(for quickAction: AskClickyQuickAction) -> AskClickyComputedResult {
+        switch quickAction {
+        case .whatDidYouLearnAboutMe:
+            return computeWhatDidYouLearnAskResult()
+        case .helpMeCommitInXcodeAgain:
+            return computeHelpMeCommitInXcodeAgainAskResult()
+        case .whatShouldIDoNextInThisApp:
+            return computeWhatShouldIDoNextInThisAppAskResult()
+        }
+    }
+
+    private func computeWhatDidYouLearnAskResult() -> AskClickyComputedResult {
+        let recalledActiveSkills = teachingSkillStore.skills
+            .filter { skill in skill.status == .active }
+        let recalledActivePreferences = auxiliaryMemoryStore
+            .memories(for: .preference)
+            .filter { preferenceMemory in preferenceMemory.status == .active }
+        let recalledActiveRoutines = auxiliaryMemoryStore
+            .memories(for: .routine)
+            .filter { routineMemory in routineMemory.status == .active }
+
+        let recalledMemoryTotal = recalledActiveSkills.count
+            + recalledActivePreferences.count
+            + recalledActiveRoutines.count
+
+        let spokenText = AskClickyScript.whatDidYouLearnSpokenText(
+            recalledActiveSkills: recalledActiveSkills,
+            recalledActivePreferences: recalledActivePreferences,
+            recalledActiveRoutines: recalledActiveRoutines
+        )
+
+        return AskClickyComputedResult(
+            spokenText: spokenText,
+            matchedSkillNames: [],
+            lastMatchedMemoryDescription: recalledMemoryTotal > 0
+                ? "Recall · \(recalledActiveSkills.count) skills + \(recalledActivePreferences.count) preferences + \(recalledActiveRoutines.count) routines"
+                : "Recall · nothing learned yet",
+            promptSectionsIncludedDescription: "—",
+            beforeAfterMetricDescription: recalledMemoryTotal > 0
+                ? "Recalled \(recalledMemoryTotal) real memories (read-only)"
+                : "Recalled 0 memories (baseline)"
+        )
+    }
+
+    private func computeHelpMeCommitInXcodeAgainAskResult() -> AskClickyComputedResult {
+        let matchesForAsk = SkillMatcher.matchSkills(
+            from: teachingSkillStore.skills,
+            bundleId: AskClickyScript.xcodeBundleId,
+            transcript: AskClickyQuickAction.helpMeCommitInXcodeAgain.promptText
+        )
+        let topMatchedSkill = matchesForAsk.first?.skill
+
+        let voicePromptForAsk = TeachingPromptBuilder.buildVoiceResponsePrompt(
+            basePrompt: AskClickyScript.demoBasePrompt,
+            matchedSkills: matchesForAsk.map(\.skill)
+        )
+        let promptIncludedTeachingSkillsSection =
+            voicePromptForAsk.contains("teaching skills:")
+
+        let spokenText = AskClickyScript.commitAnswerText(topMatchedSkill: topMatchedSkill)
+
+        return AskClickyComputedResult(
+            spokenText: spokenText,
+            matchedSkillNames: topMatchedSkill.map { [$0.name] } ?? [],
+            lastMatchedMemoryDescription: topMatchedSkill.map { topMatchedSkill in
+                "Skill · \(topMatchedSkill.name) (top match)"
+            } ?? "No match",
+            promptSectionsIncludedDescription: promptIncludedTeachingSkillsSection
+                ? "base + teaching skills"
+                : "base only",
+            beforeAfterMetricDescription: topMatchedSkill != nil
+                ? "Answered from matched skill (read-only)"
+                : "No commit skill saved yet"
+        )
+    }
+
+    private func computeWhatShouldIDoNextInThisAppAskResult() -> AskClickyComputedResult {
+        let simulatedAppContext = loadedDemoProfile?.simulatedAppContext
+        let contextBundleId = simulatedAppContext?.bundleId
+
+        let topMatchedRoutineMemory = AuxiliaryMemoryMatcher.matchRoutines(
+            from: auxiliaryMemoryStore.memories,
+            bundleId: contextBundleId,
+            transcript: AskClickyQuickAction.whatShouldIDoNextInThisApp.promptText,
+            limit: 2
+        ).first
+
+        let detectedRoutineChipForContextApp = RoutineDetector.suggestions(
+            from: activityStore.allEdges(),
+            suppressedEdgeIds: activityStore.suppressedEdgeIdentifiers()
+        ).first { detectedSuggestion in
+            detectedSuggestion.toBundleId == contextBundleId
+        }
+
+        let voicePromptForAsk = TeachingPromptBuilder.buildVoiceResponsePrompt(
+            basePrompt: AskClickyScript.demoBasePrompt,
+            matchedSkills: [],
+            matchedRoutines: [topMatchedRoutineMemory].compactMap { $0 }
+        )
+        let promptIncludedRoutinesSection =
+            voicePromptForAsk.contains("recurring routines:")
+
+        let spokenText = AskClickyScript.whatNextAnswerText(
+            simulatedAppContext: simulatedAppContext,
+            topMatchedRoutineMemory: topMatchedRoutineMemory,
+            detectedRoutineChipForContextApp: detectedRoutineChipForContextApp
+        )
+
+        let lastMatchedMemoryDescription: String
+        if let topMatchedRoutineMemory {
+            lastMatchedMemoryDescription = "Routine · \(topMatchedRoutineMemory.title) (matched)"
+        } else if let detectedRoutineChipForContextApp {
+            lastMatchedMemoryDescription = "Routine chip · \(detectedRoutineChipForContextApp.label)"
+        } else {
+            lastMatchedMemoryDescription = "No match"
+        }
+
+        let beforeAfterMetricDescription: String
+        if topMatchedRoutineMemory != nil {
+            beforeAfterMetricDescription = "Answer from routine memory (read-only)"
+        } else if detectedRoutineChipForContextApp != nil {
+            beforeAfterMetricDescription = "Answer from routine chip (read-only)"
+        } else if let simulatedAppContext {
+            beforeAfterMetricDescription = "No routine signal for \(simulatedAppContext.displayName)"
+        } else {
+            beforeAfterMetricDescription = "No app context loaded"
+        }
+
+        return AskClickyComputedResult(
+            spokenText: spokenText,
+            matchedSkillNames: [],
+            lastMatchedMemoryDescription: lastMatchedMemoryDescription,
+            promptSectionsIncludedDescription: promptIncludedRoutinesSection
+                ? "base + recurring routines"
+                : "base only",
+            beforeAfterMetricDescription: beforeAfterMetricDescription
+        )
+    }
+
     // MARK: - Demo Script Player
 
     /// Plays a demo script beat by beat: runs the step's real side effects,
@@ -1211,6 +1429,9 @@ final class SimulationDemoEngine: ObservableObject {
         nicheSuggestionsDemoSimulatedFrontmostAppProof = nil
         nicheSuggestionsDemoSuggestionModeProof = nil
         nicheSuggestionsDemoSuggestionsShownProof = nil
+
+        askClickyRunState = .notRun
+        activeAskClickyQuickAction = nil
 
         activeFeatureDemoKind = nil
         firstSessionLaneBeats = []
@@ -1511,5 +1732,129 @@ private enum NicheSuggestionsDemoScript {
         case .profileBiased: return "profile-biased"
         case .generalFallback: return "general fallback (unexpected)"
         }
+    }
+}
+
+/// Read-only answer assembly for one Ask Clicky quick ask, passed to the
+/// real Clicky overlay for TTS playback.
+private struct AskClickyComputedResult {
+    let spokenText: String
+    /// Skill names that informed the answer — drives the overlay's
+    /// "using what you learned" chip while TTS plays.
+    let matchedSkillNames: [String]
+    let lastMatchedMemoryDescription: String
+    let promptSectionsIncludedDescription: String
+    let beforeAfterMetricDescription: String
+}
+
+/// The deterministic copy behind the Ask Clicky quick asks. Unlike the
+/// feature demo scripts, the spoken answers are largely ASSEMBLED from
+/// real store contents at run time (skill names, memory titles, matcher
+/// results), so the spoken claims can never drift from what is actually on
+/// disk — only the connective phrasing is fixed.
+private enum AskClickyScript {
+    static let xcodeBundleId = "com.apple.dt.Xcode"
+
+    /// Short stand-in for the production voice system prompt. The proofs
+    /// are about whether TeachingPromptBuilder appends its sections, which
+    /// works identically regardless of the base prompt text.
+    static let demoBasePrompt = "you are clicky, a voice screen tutor. answer briefly."
+
+    /// TTS-friendly version of the recall answer — bullets flattened into
+    /// flowing speech.
+    static func whatDidYouLearnSpokenText(
+        recalledActiveSkills: [TeachingSkill],
+        recalledActivePreferences: [Memory],
+        recalledActiveRoutines: [Memory]
+    ) -> String {
+        whatDidYouLearnAnswerText(
+            recalledActiveSkills: recalledActiveSkills,
+            recalledActivePreferences: recalledActivePreferences,
+            recalledActiveRoutines: recalledActiveRoutines
+        )
+        .replacingOccurrences(of: "\n• ", with: ". ")
+        .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// Builds the "what did you learn about me?" answer from the REAL
+    /// recalled store contents, with an honest empty-state line when
+    /// nothing has been learned yet.
+    static func whatDidYouLearnAnswerText(
+        recalledActiveSkills: [TeachingSkill],
+        recalledActivePreferences: [Memory],
+        recalledActiveRoutines: [Memory]
+    ) -> String {
+        let recalledMemoryTotal = recalledActiveSkills.count
+            + recalledActivePreferences.count
+            + recalledActiveRoutines.count
+        guard recalledMemoryTotal > 0 else {
+            return "Nothing yet — I learn from our sessions. Teach me a workflow once, or load a demo profile, and ask me again."
+        }
+
+        var answerLines = ["Here's what I've learned about you so far:"]
+        if !recalledActiveSkills.isEmpty {
+            let skillNames = recalledActiveSkills.map(\.name).joined(separator: ", ")
+            answerLines.append("• Workflows I can repeat: \(skillNames)")
+        }
+        if !recalledActivePreferences.isEmpty {
+            let preferenceTitles = recalledActivePreferences.map(\.title).joined(separator: ", ")
+            answerLines.append("• How you like to be taught: \(preferenceTitles)")
+        }
+        if !recalledActiveRoutines.isEmpty {
+            let routineTitles = recalledActiveRoutines.map(\.title).joined(separator: ", ")
+            answerLines.append("• Routines I've noticed: \(routineTitles)")
+        }
+        return answerLines.joined(separator: "\n")
+    }
+
+    /// Commit answer copy. The step-by-step phrasing is only used when the
+    /// top match really is the demo commit skill (the one both the Skills
+    /// demo and the Developer profile write); any other matched skill gets
+    /// a name-accurate generic line, and no match gets the honest
+    /// not-learned-yet line.
+    static func commitAnswerText(topMatchedSkill: TeachingSkill?) -> String {
+        guard let topMatchedSkill else {
+            return "I haven't learned your commit flow yet — walk through it with me once (or run the Skills demo) and I'll remember it."
+        }
+        guard topMatchedSkill.id == SkillsDemoScript.commitSkillId else {
+            return "I have your saved \u{201C}\(topMatchedSkill.name)\u{201D} flow — want me to walk you through it?"
+        }
+        return "Same as last time: ⌘2 for Source Control, check your files, write the message, hit ⌘⏎. You've got this."
+    }
+
+    /// "What should I do next?" answer copy, grounded in whichever real
+    /// signal was found: a matched routine memory first, then a detected
+    /// routine chip, then honest no-signal fallbacks.
+    static func whatNextAnswerText(
+        simulatedAppContext: SimulationDemoAppContext?,
+        topMatchedRoutineMemory: Memory?,
+        detectedRoutineChipForContextApp: RoutineSuggestion?
+    ) -> String {
+        guard let simulatedAppContext else {
+            return "I'm not sure which app you're in — load a demo profile to simulate one, or just tell me what you're working on."
+        }
+        if let topMatchedRoutineMemory {
+            return "This is usually where your \u{201C}\(topMatchedRoutineMemory.title)\u{201D} routine kicks in — \(topMatchedRoutineMemory.summary). Want me to walk you through the steps?"
+        }
+        if let detectedRoutineChipForContextApp {
+            return "\(detectedRoutineChipForContextApp.label) — looks like that's your pattern right now. Want to pick up from there?"
+        }
+        return "I haven't noticed a routine for \(simulatedAppContext.displayName) yet — tell me what you're working on and I'll help from there."
+    }
+
+    /// Badge under the "what should I do next?" answer bubble, reflecting
+    /// the strongest real signal found (routine memory over chip), or nil
+    /// when nothing matched.
+    static func whatNextAnswerBadge(
+        topMatchedRoutineMemory: Memory?,
+        detectedRoutineChipForContextApp: RoutineSuggestion?
+    ) -> String? {
+        if let topMatchedRoutineMemory {
+            return "Routine: \(topMatchedRoutineMemory.title)"
+        }
+        if let detectedRoutineChipForContextApp {
+            return "Routine chip: \(detectedRoutineChipForContextApp.label)"
+        }
+        return nil
     }
 }

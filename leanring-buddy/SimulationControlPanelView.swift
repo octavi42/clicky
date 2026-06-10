@@ -10,11 +10,12 @@
 //  in a meeting without depending on live speech recognition, network timing,
 //  or macOS permissions.
 //
-//  Current state: the demo state strip, demo profile chips, reset, all four
-//  feature cards (Skills, Preferences, Routines, Niche Suggestions —
-//  scripted runs that play in the separate before/after comparison window),
-//  and the proof panel are wired to SimulationDemoEngine. The Ask Clicky
-//  quick actions still render placeholder content.
+//  Current state: every section is wired to SimulationDemoEngine — the demo
+//  state strip, demo profile chips, reset, all four feature cards (Skills,
+//  Preferences, Routines, Niche Suggestions — scripted runs that play in the
+//  separate before/after comparison window), the Ask Clicky quick asks
+//  (spoken aloud by the real Clicky overlay from read-only store recall),
+//  and the proof panel.
 //
 
 import SwiftUI
@@ -580,24 +581,18 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Ask Clicky Quick Actions
 
-    private static let askClickyQuickActionPrompts = [
-        "What did you learn about me?",
-        "Help me commit in Xcode again",
-        "What should I do next in this app?",
-    ]
-
     private var askClickyQuickActionsSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.sm) {
             sectionTitle("ASK CLICKY")
 
             HStack(spacing: DS.Spacing.sm) {
-                ForEach(Self.askClickyQuickActionPrompts, id: \.self) { askClickyQuickActionPrompt in
+                ForEach(AskClickyQuickAction.allCases) { askClickyQuickAction in
                     SimulationControlPanelChipButton(
-                        title: "\u{201C}\(askClickyQuickActionPrompt)\u{201D}",
+                        title: "\u{201C}\(askClickyQuickAction.promptText)\u{201D}",
                         iconSystemName: "mic.fill",
                         iconColor: DS.Colors.accentText,
                         action: {
-                            // Simulated ask is not wired yet — skeleton placeholder.
+                            simulationDemoEngine.runAskClickyQuickAction(askClickyQuickAction)
                         }
                     )
                 }

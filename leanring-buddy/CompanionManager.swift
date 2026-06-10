@@ -997,6 +997,57 @@ final class CompanionManager: ObservableObject {
         nicheDiscoveryManager.suggestionSnapshot(frontmostBundleId: simulatedFrontmostBundleId)
     }
 
+    /// Speaks a deterministic demo ask answer through the real Clicky
+    /// overlay + ElevenLabs TTS. Used by the presenter cockpit's Ask Clicky
+    /// quick asks instead of opening the comparison window. Memory reads are
+    /// already done by SimulationDemoEngine before this is called.
+    func speakSimulationDemoAskResponse(
+        spokenText: String,
+        matchedSkillNames: [String] = []
+    ) async {
+        currentResponseTask?.cancel()
+        elevenLabsTTSClient.stopPlayback()
+        transientHideTask?.cancel()
+        transientHideTask = nil
+
+        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+
+        if !isOverlayVisible {
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
+        }
+
+        lastMatchedSkillNames = matchedSkillNames
+        voiceState = .processing
+
+        guard !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            voiceState = .idle
+            lastMatchedSkillNames = []
+            scheduleTransientHideIfNeeded()
+            return
+        }
+
+        do {
+            try await elevenLabsTTSClient.speakText(spokenText)
+            voiceState = .responding
+            while elevenLabsTTSClient.isPlaying {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                if Task.isCancelled { break }
+            }
+        } catch {
+            ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+            print("⚠️ ElevenLabs TTS error during demo ask: \(error)")
+            speakCreditsErrorFallback()
+        }
+
+        if !Task.isCancelled {
+            voiceState = .idle
+            lastMatchedSkillNames = []
+            scheduleTransientHideIfNeeded()
+        }
+    }
+
     func refreshNicheSuggestions() {
         nicheDiscoveryManager.refreshInferredProfile()
         inferredUserNiche = nicheDiscoveryManager.inferredNiche
