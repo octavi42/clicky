@@ -73,6 +73,76 @@ enum SimulationDemoProfile: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The three Ask Clicky chips shown while this profile is loaded. Each
+    /// profile reuses the universal recall + routine asks but swaps the
+    /// middle chip for a workflow repeat that matches its primary skill.
+    var askClickyQuickActionPrompts: [AskClickyQuickActionPrompt] {
+        switch self {
+        case .developer:
+            return [
+                .whatDidYouLearnAboutMe,
+                AskClickyQuickActionPrompt(
+                    kind: .repeatPrimaryWorkflow,
+                    promptText: "Help me commit in Xcode again",
+                    workflowBundleId: "com.apple.dt.Xcode",
+                    primaryWorkflowSkillId: "demo-skill-xcode-commit",
+                    primaryWorkflowScriptedAnswer: "Same as last time: ⌘2 for Source Control, check your files, write the message, hit ⌘⏎. You've got this."
+                ),
+                .whatShouldIDoNextInThisApp,
+            ]
+        case .contentCreator:
+            return [
+                .whatDidYouLearnAboutMe,
+                AskClickyQuickActionPrompt(
+                    kind: .repeatPrimaryWorkflow,
+                    promptText: "Help me export this video in Final Cut again",
+                    workflowBundleId: "com.apple.FinalCut",
+                    primaryWorkflowSkillId: "demo-skill-finalcut-export",
+                    primaryWorkflowScriptedAnswer: "Same as last time: ⌘E for Share Master File, pick the 4K preset, choose a destination, hit Save."
+                ),
+                .whatShouldIDoNextInThisApp,
+            ]
+        case .designer:
+            return [
+                .whatDidYouLearnAboutMe,
+                AskClickyQuickActionPrompt(
+                    kind: .repeatPrimaryWorkflow,
+                    promptText: "Help me create a component in Figma again",
+                    workflowBundleId: "com.figma.Desktop",
+                    primaryWorkflowSkillId: "demo-skill-figma-component",
+                    primaryWorkflowScriptedAnswer: "Same as last time: select the frame, ⌥⌘K to componentize, then drag instances from Assets (⌥2)."
+                ),
+                .whatShouldIDoNextInThisApp,
+            ]
+        case .student:
+            return [
+                .whatDidYouLearnAboutMe,
+                AskClickyQuickActionPrompt(
+                    kind: .repeatPrimaryWorkflow,
+                    promptText: "Help me summarize this lecture in Notes again",
+                    workflowBundleId: "com.apple.Notes",
+                    primaryWorkflowSkillId: "demo-skill-notes-lecture-summary",
+                    primaryWorkflowScriptedAnswer: "Same as last time: new note with the course and date, Key Ideas / Definitions / Questions headings, one sentence per bullet."
+                ),
+                .whatShouldIDoNextInThisApp,
+            ]
+        }
+    }
+
+    /// Generic Ask Clicky chips at baseline (no profile loaded). The middle
+    /// chip stays vague because there is no primary workflow to repeat yet.
+    static let baselineAskClickyQuickActionPrompts: [AskClickyQuickActionPrompt] = [
+        .whatDidYouLearnAboutMe,
+        AskClickyQuickActionPrompt(
+            kind: .repeatPrimaryWorkflow,
+            promptText: "Help me with that workflow again",
+            workflowBundleId: nil,
+            primaryWorkflowSkillId: nil,
+            primaryWorkflowScriptedAnswer: nil
+        ),
+        .whatShouldIDoNextInThisApp,
+    ]
+
     // MARK: - Fixtures
 
     var demoSkills: [TeachingSkill] {
@@ -401,4 +471,45 @@ enum SimulationDemoFixtureDates {
     static func daysAgo(_ dayCount: Int, from now: Date = Date()) -> Date {
         Calendar.current.date(byAdding: .day, value: -dayCount, to: now) ?? now
     }
+}
+
+/// Semantic kind behind one Ask Clicky chip. The spoken prompt text and
+/// matcher inputs vary by loaded demo profile; the kind selects which
+/// read-only answer path the engine runs.
+enum AskClickyQuickActionKind: String, Equatable {
+    case whatDidYouLearnAboutMe
+    case repeatPrimaryWorkflow
+    case whatShouldIDoNextInThisApp
+}
+
+/// One Ask Clicky chip: the prompt the presenter taps and the metadata the
+/// engine needs to match skills / routines for that profile's story.
+struct AskClickyQuickActionPrompt: Identifiable, Equatable {
+    let kind: AskClickyQuickActionKind
+    let promptText: String
+    /// Bundle id fed to SkillMatcher for the workflow-repeat ask. nil at
+    /// baseline when no profile defines a primary app yet.
+    let workflowBundleId: String?
+    /// When the top match has this skill id, the profile's scripted shortcut
+    /// answer is spoken instead of the generic matched-skill line.
+    let primaryWorkflowSkillId: String?
+    let primaryWorkflowScriptedAnswer: String?
+
+    var id: String { "\(kind.rawValue)-\(promptText)" }
+
+    static let whatDidYouLearnAboutMe = AskClickyQuickActionPrompt(
+        kind: .whatDidYouLearnAboutMe,
+        promptText: "What did you learn about me?",
+        workflowBundleId: nil,
+        primaryWorkflowSkillId: nil,
+        primaryWorkflowScriptedAnswer: nil
+    )
+
+    static let whatShouldIDoNextInThisApp = AskClickyQuickActionPrompt(
+        kind: .whatShouldIDoNextInThisApp,
+        promptText: "What should I do next in this app?",
+        workflowBundleId: nil,
+        primaryWorkflowSkillId: nil,
+        primaryWorkflowScriptedAnswer: nil
+    )
 }

@@ -37,29 +37,6 @@ enum FeatureDemoKind: Equatable {
     case nicheSuggestions
 }
 
-/// The three presenter quick asks in the cockpit's Ask Clicky section. Each
-/// is answered read-only from whatever demo state is currently loaded, then
-/// spoken aloud by the real Clicky overlay (no comparison window). Asks
-/// recall, match, and prompt-build over the live stores but never write to
-/// them, so asking never changes the loaded demo state.
-enum AskClickyQuickAction: String, CaseIterable, Identifiable, Equatable {
-    case whatDidYouLearnAboutMe
-    case helpMeCommitInXcodeAgain
-    case whatShouldIDoNextInThisApp
-
-    var id: String { rawValue }
-
-    /// The ask exactly as the simulated user "speaks" it. Also the chip
-    /// title in the cockpit and the user bubble text in the run.
-    var promptText: String {
-        switch self {
-        case .whatDidYouLearnAboutMe: return "What did you learn about me?"
-        case .helpMeCommitInXcodeAgain: return "Help me commit in Xcode again"
-        case .whatShouldIDoNextInThisApp: return "What should I do next in this app?"
-        }
-    }
-}
-
 /// One conversation beat rendered in the comparison window. A demo run is a
 /// paced sequence of these; the view renders each kind differently (user
 /// bubble, Clicky bubble, system pill).
@@ -176,7 +153,7 @@ final class SimulationDemoEngine: ObservableObject {
 
     /// Which quick ask currently owns `askClickyRunState`, used to ignore
     /// re-presses of the same chip while it is still speaking.
-    private var activeAskClickyQuickAction: AskClickyQuickAction?
+    private var activeAskClickyQuickAction: AskClickyQuickActionPrompt?
 
     // MARK: Comparison playback state
 
@@ -313,6 +290,14 @@ final class SimulationDemoEngine: ObservableObject {
         demoSkillCount = teachingSkillStore.skills.count
         demoPreferenceCount = auxiliaryMemoryStore.memories(for: .preference).count
         demoRoutineMemoryCount = auxiliaryMemoryStore.memories(for: .routine).count
+    }
+
+    /// Ask Clicky chips for the cockpit. Swaps to profile-specific prompts
+    /// when a demo profile is loaded; otherwise shows the generic baseline
+    /// set (including a vague workflow-repeat ask with no primary app yet).
+    func askClickyQuickActionsForCurrentProfile() -> [AskClickyQuickActionPrompt] {
+        loadedDemoProfile?.askClickyQuickActionPrompts
+            ?? SimulationDemoProfile.baselineAskClickyQuickActionPrompts
     }
 
     // MARK: - Skills Demo Run
@@ -1173,7 +1158,7 @@ final class SimulationDemoEngine: ObservableObject {
     /// memory reads / matchers are real and read-only; only the spoken copy
     /// is scripted. Unlike the feature demos, asks never write to the
     /// stores and never open the comparison window.
-    func runAskClickyQuickAction(_ quickAction: AskClickyQuickAction) {
+    func runAskClickyQuickAction(_ quickAction: AskClickyQuickActionPrompt) {
         // Re-pressing the SAME ask mid-run is ignored; starting a different
         // ask (or a feature demo) is allowed — the clear below cancels the
         // in-flight run's task first.
@@ -1190,7 +1175,7 @@ final class SimulationDemoEngine: ObservableObject {
         }
     }
 
-    private func performAskClickyQuickActionRun(_ quickAction: AskClickyQuickAction) async {
+    private func performAskClickyQuickActionRun(_ quickAction: AskClickyQuickActionPrompt) async {
         let computedAskResult = computeAskClickyResult(for: quickAction)
 
         lastMatchedMemoryDescription = computedAskResult.lastMatchedMemoryDescription
@@ -1212,14 +1197,14 @@ final class SimulationDemoEngine: ObservableObject {
     /// Read-only answer assembly for one Ask Clicky quick ask. Each branch
     /// runs the same production matchers the voice pipeline uses, then
     /// builds speakable copy from the real results.
-    private func computeAskClickyResult(for quickAction: AskClickyQuickAction) -> AskClickyComputedResult {
-        switch quickAction {
+    private func computeAskClickyResult(for quickAction: AskClickyQuickActionPrompt) -> AskClickyComputedResult {
+        switch quickAction.kind {
         case .whatDidYouLearnAboutMe:
             return computeWhatDidYouLearnAskResult()
-        case .helpMeCommitInXcodeAgain:
-            return computeHelpMeCommitInXcodeAgainAskResult()
+        case .repeatPrimaryWorkflow:
+            return computeRepeatPrimaryWorkflowAskResult(quickAction: quickAction)
         case .whatShouldIDoNextInThisApp:
-            return computeWhatShouldIDoNextInThisAppAskResult()
+            return computeWhatShouldIDoNextInThisAppAskResult(quickAction: quickAction)
         }
     }
 
@@ -1256,11 +1241,13 @@ final class SimulationDemoEngine: ObservableObject {
         )
     }
 
-    private func computeHelpMeCommitInXcodeAgainAskResult() -> AskClickyComputedResult {
+    private func computeRepeatPrimaryWorkflowAskResult(
+        quickAction: AskClickyQuickActionPrompt
+    ) -> AskClickyComputedResult {
         let matchesForAsk = SkillMatcher.matchSkills(
             from: teachingSkillStore.skills,
-            bundleId: AskClickyScript.xcodeBundleId,
-            transcript: AskClickyQuickAction.helpMeCommitInXcodeAgain.promptText
+            bundleId: quickAction.workflowBundleId,
+            transcript: quickAction.promptText
         )
         let topMatchedSkill = matchesForAsk.first?.skill
 
@@ -1271,7 +1258,20 @@ final class SimulationDemoEngine: ObservableObject {
         let promptIncludedTeachingSkillsSection =
             voicePromptForAsk.contains("teaching skills:")
 
-        let spokenText = AskClickyScript.commitAnswerText(topMatchedSkill: topMatchedSkill)
+        let spokenText = AskClickyScript.repeatWorkflowAnswerText(
+            topMatchedSkill: topMatchedSkill,
+            primaryWorkflowSkillId: quickAction.primaryWorkflowSkillId,
+            primaryWorkflowScriptedAnswer: quickAction.primaryWorkflowScriptedAnswer
+        )
+
+        let beforeAfterMetricDescription: String
+        if topMatchedSkill != nil {
+            beforeAfterMetricDescription = "Answered from matched skill (read-only)"
+        } else if quickAction.workflowBundleId != nil {
+            beforeAfterMetricDescription = "No saved workflow skill yet for this profile"
+        } else {
+            beforeAfterMetricDescription = "No workflow skill saved yet — load a profile first"
+        }
 
         return AskClickyComputedResult(
             spokenText: spokenText,
@@ -1282,20 +1282,20 @@ final class SimulationDemoEngine: ObservableObject {
             promptSectionsIncludedDescription: promptIncludedTeachingSkillsSection
                 ? "base + teaching skills"
                 : "base only",
-            beforeAfterMetricDescription: topMatchedSkill != nil
-                ? "Answered from matched skill (read-only)"
-                : "No commit skill saved yet"
+            beforeAfterMetricDescription: beforeAfterMetricDescription
         )
     }
 
-    private func computeWhatShouldIDoNextInThisAppAskResult() -> AskClickyComputedResult {
+    private func computeWhatShouldIDoNextInThisAppAskResult(
+        quickAction: AskClickyQuickActionPrompt
+    ) -> AskClickyComputedResult {
         let simulatedAppContext = loadedDemoProfile?.simulatedAppContext
         let contextBundleId = simulatedAppContext?.bundleId
 
         let topMatchedRoutineMemory = AuxiliaryMemoryMatcher.matchRoutines(
             from: auxiliaryMemoryStore.memories,
             bundleId: contextBundleId,
-            transcript: AskClickyQuickAction.whatShouldIDoNextInThisApp.promptText,
+            transcript: quickAction.promptText,
             limit: 2
         ).first
 
@@ -1753,8 +1753,6 @@ private struct AskClickyComputedResult {
 /// results), so the spoken claims can never drift from what is actually on
 /// disk — only the connective phrasing is fixed.
 private enum AskClickyScript {
-    static let xcodeBundleId = "com.apple.dt.Xcode"
-
     /// Short stand-in for the production voice system prompt. The proofs
     /// are about whether TeachingPromptBuilder appends its sections, which
     /// works identically regardless of the base prompt text.
@@ -1807,19 +1805,23 @@ private enum AskClickyScript {
         return answerLines.joined(separator: "\n")
     }
 
-    /// Commit answer copy. The step-by-step phrasing is only used when the
-    /// top match really is the demo commit skill (the one both the Skills
-    /// demo and the Developer profile write); any other matched skill gets
-    /// a name-accurate generic line, and no match gets the honest
-    /// not-learned-yet line.
-    static func commitAnswerText(topMatchedSkill: TeachingSkill?) -> String {
+    /// Workflow-repeat answer copy. When the top match is the profile's
+    /// primary skill, the profile's scripted shortcut line is spoken;
+    /// any other matched skill gets a name-accurate generic line; no
+    /// match gets an honest not-learned-yet line.
+    static func repeatWorkflowAnswerText(
+        topMatchedSkill: TeachingSkill?,
+        primaryWorkflowSkillId: String?,
+        primaryWorkflowScriptedAnswer: String?
+    ) -> String {
         guard let topMatchedSkill else {
-            return "I haven't learned your commit flow yet — walk through it with me once (or run the Skills demo) and I'll remember it."
+            return "I haven't learned that workflow yet — walk through it with me once, or load a demo profile, and ask again."
         }
-        guard topMatchedSkill.id == SkillsDemoScript.commitSkillId else {
-            return "I have your saved \u{201C}\(topMatchedSkill.name)\u{201D} flow — want me to walk you through it?"
+        if topMatchedSkill.id == primaryWorkflowSkillId,
+           let primaryWorkflowScriptedAnswer {
+            return primaryWorkflowScriptedAnswer
         }
-        return "Same as last time: ⌘2 for Source Control, check your files, write the message, hit ⌘⏎. You've got this."
+        return "I have your saved \u{201C}\(topMatchedSkill.name)\u{201D} flow — want me to walk you through it?"
     }
 
     /// "What should I do next?" answer copy, grounded in whichever real

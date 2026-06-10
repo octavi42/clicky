@@ -586,7 +586,7 @@ struct SimulationControlPanelView: View {
             sectionTitle("ASK CLICKY")
 
             HStack(spacing: DS.Spacing.sm) {
-                ForEach(AskClickyQuickAction.allCases) { askClickyQuickAction in
+                ForEach(simulationDemoEngine.askClickyQuickActionsForCurrentProfile()) { askClickyQuickAction in
                     SimulationControlPanelChipButton(
                         title: "\u{201C}\(askClickyQuickAction.promptText)\u{201D}",
                         iconSystemName: "mic.fill",
