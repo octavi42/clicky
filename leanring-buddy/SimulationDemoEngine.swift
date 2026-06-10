@@ -27,9 +27,9 @@ enum SkillsDemoRunState: Equatable {
     }
 }
 
-/// One conversation beat rendered on the demo stage. A demo run is a paced
-/// sequence of these; the stage view renders each kind differently (user
-/// bubble, Clicky bubble, system pill, time gap divider, recap strip).
+/// One conversation beat rendered in the comparison window. A demo run is a
+/// paced sequence of these; the view renders each kind differently (user
+/// bubble, Clicky bubble, system pill).
 ///
 /// The same beats are designed to be replayable onto the real cursor overlay
 /// later ("theater mode") — only the renderer changes, never the script.
@@ -42,20 +42,26 @@ enum DemoConversationBeat: Equatable {
     case clickyResponds(text: String, matchedSkillBadge: String?)
     /// Centered pill marking a real engine event (skill saved, no match…).
     case systemEvent(iconSystemName: String, label: String, detail: String?)
-    /// Centered hairline divider with a label like "Next day…".
-    case timeGap(label: String)
-    /// Emphasized full-width summary strip closing the run.
-    case recap(text: String)
 
-    /// Whether the stage should show the typing indicator before this beat
-    /// lands (only Clicky's bubbles "think" first).
+    /// Whether the comparison column should show the typing indicator before
+    /// this beat lands (only Clicky's bubbles "think" first).
     var showsTypingIndicatorFirst: Bool {
         if case .clickyResponds = self { return true }
         return false
     }
 }
 
-/// A stage beat with a stable identity for SwiftUI list rendering.
+/// Which side of the before/after comparison a beat plays in. The lane
+/// switch itself is the "time gap": the second-session column header carries
+/// the "Next day" label, so no divider beat is needed.
+enum DemoComparisonLane: Equatable {
+    /// Left column — the user asks for the first time, Clicky teaches from scratch.
+    case firstSession
+    /// Right column — the re-ask after Clicky has learned.
+    case secondSession
+}
+
+/// A played beat with a stable identity for SwiftUI list rendering.
 struct DemoStageBeat: Identifiable, Equatable {
     let id: Int
     let beat: DemoConversationBeat
@@ -66,8 +72,14 @@ struct DemoStageBeat: Identifiable, Equatable {
 /// the closure, so each mutation fires at exactly its beat — never earlier,
 /// never later. Beat content can therefore depend on side-effect results
 /// (e.g. the matched-skill badge).
+///
+/// Returning nil renders nothing: the step only runs side effects (used by
+/// the closing recap step, which publishes the recap strip text instead of
+/// appending a conversation row).
 struct DemoScriptStep {
-    let performSideEffectsAndProduceBeat: @MainActor () -> DemoConversationBeat
+    /// The comparison column this step's beat (and typing indicator) plays in.
+    let lane: DemoComparisonLane
+    let performSideEffectsAndProduceBeat: @MainActor () -> DemoConversationBeat?
 }
 
 @MainActor
@@ -90,14 +102,23 @@ final class SimulationDemoEngine: ObservableObject {
     @Published private(set) var skillsDemoPromptIncludedProof: String?
     @Published private(set) var skillsDemoTurnsToSuccessProof: String?
 
-    // MARK: Demo stage playback state
+    // MARK: Comparison playback state
 
-    /// Beats currently on the stage, appended one at a time with pacing.
-    @Published private(set) var stagePlaybackBeats: [DemoStageBeat] = []
-    /// True while the stage shows Clicky's typing indicator (set just before
-    /// each Clicky bubble lands).
-    @Published private(set) var isClickyTypingOnStage: Bool = false
-    /// Which demo currently owns the stage, e.g. "Skills · Xcode Commit Flow".
+    /// Beats played so far in the left "first time" column, appended one at
+    /// a time with pacing.
+    @Published private(set) var firstSessionLaneBeats: [DemoStageBeat] = []
+    /// Beats played so far in the right "next day" column. Stays empty until
+    /// the first session finishes, which is what makes the right column sit
+    /// in its waiting state during the first half of the run.
+    @Published private(set) var secondSessionLaneBeats: [DemoStageBeat] = []
+    /// Which column is showing Clicky's typing indicator right now (set just
+    /// before each Clicky bubble lands). nil = no typing indicator anywhere.
+    @Published private(set) var clickyTypingLane: DemoComparisonLane?
+    /// Closing summary strip spanning both columns, published by the final
+    /// script step. nil until the run reaches its recap.
+    @Published private(set) var comparisonRecapText: String?
+    /// Which demo currently owns the comparison window, e.g.
+    /// "Skills · Xcode Commit Flow". nil when no run has started.
     @Published private(set) var stageDemoTitle: String?
 
     // MARK: Proof Panel fields (shared by all demo cards)
@@ -202,23 +223,24 @@ final class SimulationDemoEngine: ObservableObject {
 
     // MARK: - Skills Demo Run
 
-    /// Plays the full "learn then reuse" Xcode commit arc as a conversation
-    /// on the demo stage:
+    /// Plays the full "learn then reuse" Xcode commit arc as a before/after
+    /// conversation in the comparison window:
     ///
-    /// 1. First session — the REAL SkillMatcher finds no commit skill, so
-    ///    Clicky teaches from scratch over a 4-turn exchange.
-    /// 2. A REAL skill is written to TeachingSkillStore (save pill on stage,
-    ///    Brain tab shows it).
-    /// 3. "Next day" — the re-ask. The REAL matcher finds the skill, the
-    ///    REAL TeachingPromptBuilder injects its prompt section, and Clicky
-    ///    answers in a single turn with a matched badge.
+    /// 1. Left column — the REAL SkillMatcher finds no commit skill, so
+    ///    Clicky teaches from scratch over a 4-turn exchange, ending with a
+    ///    REAL skill write to TeachingSkillStore (save pill, Brain tab
+    ///    shows it).
+    /// 2. Right column ("Next day") — the re-ask. The REAL matcher finds
+    ///    the skill, the REAL TeachingPromptBuilder injects its prompt
+    ///    section, and Clicky answers in a single turn with a matched badge.
+    /// 3. A recap strip spanning both columns lands last.
     ///
     /// Only the conversation text is scripted (the demo must not depend on
     /// speech or network); the store write, matching, and prompt assembly
     /// are the production code paths. The demo commit skill is deleted up
     /// front so every run replays the identical arc, even right after
     /// loading the Developer profile (which seeds that same skill).
-    /// Calling this again (the stage Replay chip) restarts the run.
+    /// Calling this again (the window's Replay chip) restarts the run.
     func runSkillsDemo() {
         guard !skillsDemoRunState.isRunning else { return }
 
@@ -252,7 +274,7 @@ final class SimulationDemoEngine: ObservableObject {
     /// The Skills demo as a conversation script. Side effects (matcher runs,
     /// the skill write, prompt build, proof updates) execute inside the beat
     /// producers, so each real operation fires exactly when its beat lands
-    /// on stage. Conversation text is scripted; the operations are real.
+    /// in its column. Conversation text is scripted; the operations are real.
     private func makeSkillsDemoScript() -> [DemoScriptStep] {
         // Shared mutable state between steps. A reference type so closures
         // created upfront all see values written by earlier steps (the
@@ -264,10 +286,10 @@ final class SimulationDemoEngine: ObservableObject {
 
         return [
             // First session: the user has never asked this before.
-            DemoScriptStep {
+            DemoScriptStep(lane: .firstSession) {
                 .userSays(text: SkillsDemoScript.firstAskTranscript)
             },
-            DemoScriptStep { [self] in
+            DemoScriptStep(lane: .firstSession) { [self] in
                 // Real matcher over the live store: proves nothing matches yet.
                 let matchesBeforeSave = SkillMatcher.matchSkills(
                     from: teachingSkillStore.skills,
@@ -285,22 +307,22 @@ final class SimulationDemoEngine: ObservableObject {
                     detail: "SkillMatcher ran over the real store"
                 )
             },
-            DemoScriptStep {
+            DemoScriptStep(lane: .firstSession) {
                 .clickyResponds(text: SkillsDemoScript.firstGuidanceResponse, matchedSkillBadge: nil)
             },
-            DemoScriptStep {
+            DemoScriptStep(lane: .firstSession) {
                 .userSays(text: SkillsDemoScript.followUpQuestionTranscript)
             },
-            DemoScriptStep {
+            DemoScriptStep(lane: .firstSession) {
                 .clickyResponds(text: SkillsDemoScript.followUpGuidanceResponse, matchedSkillBadge: nil)
             },
-            DemoScriptStep {
+            DemoScriptStep(lane: .firstSession) {
                 .userSays(text: SkillsDemoScript.confirmationTranscript)
             },
-            DemoScriptStep {
+            DemoScriptStep(lane: .firstSession) {
                 .clickyResponds(text: SkillsDemoScript.confirmationAcknowledgement, matchedSkillBadge: nil)
             },
-            DemoScriptStep { [self] in
+            DemoScriptStep(lane: .firstSession) { [self] in
                 // Real store write — the skill is on disk from this beat on.
                 let freshlyLearnedCommitSkill = SkillsDemoScript.makeFreshlyLearnedXcodeCommitSkill()
                 do {
@@ -321,14 +343,12 @@ final class SimulationDemoEngine: ObservableObject {
                 )
             },
 
-            // Second session: same ask, after Clicky has learned.
-            DemoScriptStep {
-                .timeGap(label: "Next day")
-            },
-            DemoScriptStep {
+            // Second session: same ask, after Clicky has learned. The lane
+            // switch wakes up the right "Next day" column.
+            DemoScriptStep(lane: .secondSession) {
                 .userSays(text: SkillsDemoScript.reAskTranscript)
             },
-            DemoScriptStep { [self] in
+            DemoScriptStep(lane: .secondSession) { [self] in
                 // Real matcher + real prompt builder: proves the saved skill
                 // is found and injected into the voice system prompt.
                 let matchesAfterSave = SkillMatcher.matchSkills(
@@ -370,7 +390,7 @@ final class SimulationDemoEngine: ObservableObject {
                     detail: "SkillMatcher + TeachingPromptBuilder ran for real"
                 )
             },
-            DemoScriptStep {
+            DemoScriptStep(lane: .secondSession) {
                 .clickyResponds(
                     text: SkillsDemoScript.reAskResponse,
                     // Badge reflects the real matcher result from the
@@ -380,10 +400,13 @@ final class SimulationDemoEngine: ObservableObject {
                         : nil
                 )
             },
-            DemoScriptStep { [self] in
+            DemoScriptStep(lane: .secondSession) { [self] in
                 skillsDemoTurnsToSuccessProof = "4 → 1 (simulated)"
                 beforeAfterMetricDescription = "Turns to success: 4 → 1 (simulated demo metric)"
-                return .recap(text: "First time: 4 turns → Next time: 1 turn (simulated demo metric)")
+                // Side-effect-only step: publishes the recap strip spanning
+                // both columns instead of appending a conversation row.
+                comparisonRecapText = "First time: 4 turns → Next time: 1 turn (simulated demo metric)"
+                return nil
             },
         ]
     }
@@ -391,27 +414,44 @@ final class SimulationDemoEngine: ObservableObject {
     // MARK: - Demo Script Player
 
     /// Plays a demo script beat by beat: runs the step's real side effects,
-    /// shows the typing indicator before Clicky bubbles, appends the beat to
-    /// the stage, and pauses so the presenter can narrate. Cancellation
-    /// (reset / profile load / re-run) stops playback between beats.
+    /// shows the typing indicator (in the step's lane) before Clicky bubbles,
+    /// appends the beat to that lane's column, and pauses so the presenter
+    /// can narrate. Cancellation (reset / profile load / re-run) stops
+    /// playback between beats.
     private func playDemoScript(_ demoScriptSteps: [DemoScriptStep]) async {
         for demoScriptStep in demoScriptSteps {
             guard !Task.isCancelled else { return }
 
-            let beat = demoScriptStep.performSideEffectsAndProduceBeat()
+            guard let beat = demoScriptStep.performSideEffectsAndProduceBeat() else {
+                // Side-effect-only step (e.g. the recap): nothing to render,
+                // no pacing pause needed.
+                continue
+            }
 
             if beat.showsTypingIndicatorFirst {
-                isClickyTypingOnStage = true
+                clickyTypingLane = demoScriptStep.lane
                 await pause(nanoseconds: SkillsDemoScript.typingIndicatorNanoseconds)
-                isClickyTypingOnStage = false
+                clickyTypingLane = nil
                 guard !Task.isCancelled else { return }
             }
 
-            stagePlaybackBeats.append(
-                DemoStageBeat(id: stagePlaybackBeats.count, beat: beat)
-            )
+            appendBeat(beat, to: demoScriptStep.lane)
 
             await pause(nanoseconds: SkillsDemoScript.pacingAfterBeatNanoseconds)
+        }
+    }
+
+    private func appendBeat(_ beat: DemoConversationBeat, to comparisonLane: DemoComparisonLane) {
+        // IDs continue across both lanes so every beat in the run keeps a
+        // unique, stable identity for SwiftUI.
+        let nextBeatId = firstSessionLaneBeats.count + secondSessionLaneBeats.count
+        let stageBeat = DemoStageBeat(id: nextBeatId, beat: beat)
+
+        switch comparisonLane {
+        case .firstSession:
+            firstSessionLaneBeats.append(stageBeat)
+        case .secondSession:
+            secondSessionLaneBeats.append(stageBeat)
         }
     }
 
@@ -427,8 +467,10 @@ final class SimulationDemoEngine: ObservableObject {
         skillsDemoSkillMatchedProof = nil
         skillsDemoPromptIncludedProof = nil
         skillsDemoTurnsToSuccessProof = nil
-        stagePlaybackBeats = []
-        isClickyTypingOnStage = false
+        firstSessionLaneBeats = []
+        secondSessionLaneBeats = []
+        clickyTypingLane = nil
+        comparisonRecapText = nil
         stageDemoTitle = nil
     }
 

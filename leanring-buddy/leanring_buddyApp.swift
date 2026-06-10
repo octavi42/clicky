@@ -31,6 +31,7 @@ struct leanring_buddyApp: App {
 final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelManager: MenuBarPanelManager?
     private var simulationControlPanelWindowManager: SimulationControlPanelWindowManager?
+    private var simulationDemoComparisonWindowManager: SimulationDemoComparisonWindowManager?
     private let companionManager = CompanionManager()
     private var sparkleUpdaterController: SPUStandardUpdaterController?
 
@@ -47,6 +48,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
         simulationControlPanelWindowManager = SimulationControlPanelWindowManager(companionManager: companionManager)
+        simulationDemoComparisonWindowManager = SimulationDemoComparisonWindowManager(companionManager: companionManager)
         companionManager.start()
 
         companionManager.runE2EBootstrapActionsIfNeeded()
