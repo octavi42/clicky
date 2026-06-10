@@ -142,7 +142,14 @@ struct CompanionPanelView: View {
     }
 
     private var showsPanelTabs: Bool {
-        companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted
+        // Skip-setup builds (isolated demo/E2E worktrees) always show the
+        // tabbed panel: their TCC permissions can look "denied" because the
+        // build signature differs from the main dev build, and the setup
+        // screen would otherwise block access to the panel entirely.
+        if ClickyE2EConfiguration.shouldSkipSetup {
+            return true
+        }
+        return companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted
     }
 
     private var selectedTabContent: some View {
@@ -362,6 +369,10 @@ struct CompanionPanelView: View {
             }
 
             dmFarzaButton
+
+            #if DEBUG
+            openMemoryDemoButton
+            #endif
         }
     }
 
@@ -1520,6 +1531,46 @@ struct CompanionPanelView: View {
         .buttonStyle(.plain)
         .pointerCursor()
     }
+
+    // MARK: - Memory Demo Button (DEBUG only)
+
+    #if DEBUG
+    /// Opens the presenter-only "Clicky Memory Demo" control panel in its own
+    /// window, then dismisses the dropdown so the window takes over.
+    private var openMemoryDemoButton: some View {
+        Button(action: {
+            NotificationCenter.default.post(name: .clickyOpenSimulationControlPanel, object: nil)
+            NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 12, weight: .medium))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Open Memory Demo")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Presenter-only simulation control panel")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+            }
+            .foregroundColor(DS.Colors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+    #endif
 
     // MARK: - Footer
 

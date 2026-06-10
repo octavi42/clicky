@@ -65,12 +65,12 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "-CLICKY_DEFAULTS_SUITE=clicky-memory-routines"
+            argument = "-CLICKY_DEFAULTS_SUITE=clicky-simulation-control-panel"
             isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "-CLICKY_DISABLE_GLOBAL_PTT=1"
-            isEnabled = "NO">
+            isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "-CLICKY_SKIP_SETUP=1"
@@ -80,7 +80,7 @@
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "CLICKY_HOME"
-            value = "/tmp/clicky-memory-routines"
+            value = "/tmp/clicky-simulation-control-panel"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>
