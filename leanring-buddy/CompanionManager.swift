@@ -1025,7 +1025,9 @@ final class CompanionManager: ObservableObject {
                     gateReasons: gateReasons,
                     sessionId: sessionId,
                     targetBundleId: targetBundleId,
-                    updatedExistingMemory: existingSkill != nil
+                    updatedExistingMemory: existingSkill != nil,
+                    memoryTitleSnapshot: skill.name,
+                    memorySummarySnapshot: skill.description
                 )
                 skill.receipts = MemoryReceipt.appendReceipt(saveReceipt, to: skill.receipts)
 
@@ -1142,7 +1144,9 @@ final class CompanionManager: ObservableObject {
                     // Global preferences keep a nil scope, but the receipt should
                     // still record the app the user was in when they said it.
                     targetBundleId: targetBundleId ?? turns.last?.bundleId,
-                    updatedExistingMemory: synthesisResult.updatedExistingMemory
+                    updatedExistingMemory: synthesisResult.updatedExistingMemory,
+                    memoryTitleSnapshot: memory.title,
+                    memorySummarySnapshot: memory.summary
                 )
                 memory.receipts = MemoryReceipt.appendReceipt(saveReceipt, to: memory.receipts)
                 _ = try auxiliaryMemoryStore.save(memory)
@@ -1226,7 +1230,9 @@ final class CompanionManager: ObservableObject {
                     gateReasons: gateReasons,
                     sessionId: sessionId,
                     targetBundleId: targetBundleId,
-                    updatedExistingMemory: synthesisResult.updatedExistingMemory
+                    updatedExistingMemory: synthesisResult.updatedExistingMemory,
+                    memoryTitleSnapshot: memory.title,
+                    memorySummarySnapshot: memory.summary
                 )
                 memory.receipts = MemoryReceipt.appendReceipt(saveReceipt, to: memory.receipts)
                 _ = try auxiliaryMemoryStore.save(memory)

@@ -97,11 +97,12 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `TeachingPromptBuilder.swift` | ~100 | Composes voice response system prompt with matched teaching skills, active preferences, and matched routines. |
 | `TeachingSkillsLibraryView.swift` | ~260 | Full skills library UI with status filters, detail view, pin/delete/restore. |
 | `Memory.swift` | ~170 | Category-aware memory model and `MemoryEdit` for the unified memories UI. Carries `receipts` save evidence with decoding that tolerates legacy files without the key. |
-| `MemoryReceipt.swift` | ~260 | Self-contained save-evidence model (gate reasons, verbatim user phrases, app, session ID) captured at distill time. Includes the capture builder, per-memory receipt cap, `GateReason` display labels, and the grounded "Ask Clicky why" explanation prompt builder with deterministic fallback. |
+| `MemoryReceipt.swift` | ~307 | Self-contained save-evidence model (gate reasons, verbatim user phrases, app, session ID) captured at distill time. Each receipt also snapshots the memory's title/summary as saved — stores overwrite in place, so the snapshots are what the diff timeline compares. Includes the capture builder, per-memory receipt cap, `GateReason` display labels, and the grounded "Ask Clicky why" explanation prompt builder with deterministic fallback. |
+| `MemoryDiffTimeline.swift` | ~135 | Builds the "How this changed" timeline from a memory's receipts, newest first. Was → Now diffs for preferences/routines from consecutive receipt snapshots (title preferred, summary fallback, never guessed for legacy receipts); lighter Saved/Updated activity entries for skills. Timeline hidden under 2 saves. |
 | `SelfKnowledgeSummary.swift` | ~220 | "What did you learn about me?" support: deterministic voice-intent detector (contiguous word matching, no LLM) and the grounded summary prompt builder over active memories — per-category top-5 caps with honest truncation counts, deterministic counts fallback, and an empty-state canned answer. |
 | `AuxiliaryMemoryStore.swift` | ~78 | Persists preference and routine memories at `~/.clicky/auxiliary-memories.json`. |
-| `MemoriesLibraryView.swift` | ~590 | Unified memories library with category tabs, detail view, edit, and delete. Detail view shows the save receipt ("Why Clicky saved this") and the "Ask Clicky why" spoken explanation. |
-| `DummyMemorySeeder.swift` | ~175 | DEBUG-only seeder for sample memories (including sample receipts) during local development. |
+| `MemoriesLibraryView.swift` | ~770 | Unified memories library with category tabs, detail view, edit, and delete. Detail view shows the collapsible "How this changed" diff timeline, the save receipt ("Why Clicky saved this"), and the "Ask Clicky why" spoken explanation. |
+| `DummyMemorySeeder.swift` | ~424 | DEBUG-only seeder for sample memories (including sample receipts) during local development. Multi-receipt seeds exercise the diff timeline for all three categories. |
 | `ClickyE2EConfiguration.swift` | ~75 | Launch flags and E2E debug artifact paths for automated tests. |
 | `NicheDiscoveryManager.swift` | ~175 | Niche onboarding, static/app-aware suggestion cards, local override loading. |
 | `ActivityStore.swift` | ~155 | Persists app-to-app transition edges to `ClickyPaths.activity` for passive routine detection. |
@@ -115,6 +116,7 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `leanring-buddyTests/SelfKnowledgeSummaryTests.swift` | ~230 | Unit tests for the self-knowledge intent detector (positives and near-miss negatives) and summary prompt grounding: per-category caps, tie-breaking, omitted empty categories, and the deterministic counts fallback. |
 | `leanring-buddyTests/ActivityStoreTests.swift` | ~175 | Unit tests for transition edge counting, pruning, suppression, and routine detection thresholds. |
 | `leanring-buddyTests/MemoryDedupEvalTests.swift` | ~220 | Offline dedup eval harness with labeled fixture pairs; regression guard for merge vs separate decisions. |
+| `leanring-buddyTests/MemoryDiffTimelineTests.swift` | ~370 | Unit tests for receipt text snapshots, backward-compatible decoding, the 2+ saves collapse rule, entry ordering, and Was → Now diff derivation versus the skill activity style. |
 | `tests/e2e/full-stack/` | — | Scaffold for full user-perspective E2E (BlackHole, PTT simulation, Peekaboo). |
 | `worker/src/index.ts` | ~142 | Cloudflare Worker proxy. Three routes: `/chat` (Claude), `/tts` (ElevenLabs), `/transcribe-token` (AssemblyAI temp token). |
 

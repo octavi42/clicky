@@ -10,7 +10,7 @@ Data home: `/tmp/clicky-roadmap-ideas`
 |---|------|--------|-------------|
 | 1 | Memory Receipts | **Done** (merged 2026-06-10) | `feature/memory-receipts` → [PR #14](https://github.com/octavi42/clicky/pull/14) |
 | 2 | What Did You Learn About Me? | **Done** (implemented 2026-06-10) | `feature/what-did-you-learn` |
-| 3 | Memory Diff Timeline | **Next** | `feature/memory-diff-timeline` |
+| 3 | Memory Diff Timeline | **Done** (implemented 2026-06-10) — see [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) | `feature/memory-diff-timeline` |
 | 4 | Daily Brain Digest | Pending | `feature/daily-brain-digest` |
 | 5 | Memory Hygiene Coach | Pending | `feature/memory-hygiene-coach` |
 | 6 | Unique Stuff You Do | Pending | `feature/unique-behavior-insights` |
@@ -81,7 +81,9 @@ Likely implementation areas:
 - `PersonalKnowledgeManager.swift` for opt-in vault signals.
 - `MemoriesLibraryView.swift` or a Brain section in `CompanionPanelView.swift`.
 
-### 3. Memory Diff Timeline
+### 3. Memory Diff Timeline — **DONE** (implemented 2026-06-10, prep doc: [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md))
+
+**Shipped:** Receipts-first timeline (Option A from the prep doc). Each receipt snapshots the memory's title/summary at save time (`MemoryReceipt.memoryTitleSnapshot`/`memorySummarySnapshot`, backward-compatible decode), `MemoryDiffTimeline.swift` derives newest-first entries with Was → Now diffs for preferences/routines and Saved/Updated activity entries for skills, and `MemoriesLibraryView` shows a collapsible "How this changed" section in memory detail (hidden under 2 saves). Unit tests in `MemoryDiffTimelineTests.swift`. Manual library edits still don't append receipts — follow-up slice if needed.
 
 Show how memories changed over time, especially preferences and routines.
 
@@ -194,8 +196,8 @@ Avoid building a generic task manager or timer that is not differentiated.
 
 1. ~~Memory Receipts.~~ **Done**
 2. ~~What Did You Learn About Me?~~ **Done**
-3. Memory Diff Timeline. ← **start here**
-4. Daily Brain Digest.
+3. ~~Memory Diff Timeline.~~ **Done**
+4. Daily Brain Digest. ← **start here**
 5. Memory Hygiene Coach.
 6. Unique Behavior Insights.
 7. Native Tasks or Timer, only if made context-aware.
@@ -227,7 +229,7 @@ Prefer `--no-ff` merges (not squash) so every commit stays visible inside a merg
 |------|--------|--------|
 | Memory Receipts | `feature/memory-receipts` | Done (PR #14) |
 | What Did You Learn About Me? | `feature/what-did-you-learn` | Done (implemented 2026-06-10) |
-| Memory Diff Timeline | `feature/memory-diff-timeline` | **Next** |
+| Memory Diff Timeline | `feature/memory-diff-timeline` | Done (implemented 2026-06-10) |
 | Daily Brain Digest | `feature/daily-brain-digest` | Pending |
 | Memory Hygiene Coach | `feature/memory-hygiene-coach` | Pending |
 | Unique Stuff You Do | `feature/unique-behavior-insights` | Pending |
@@ -251,4 +253,5 @@ Cursor rule: `.cursor/rules/roadmap-ideas-git-workflow.mdc`
 - ~~The first implementation slice should make saved memory explainable with evidence.~~ **Shipped** — see `MemoryReceipt.swift`, `MemoriesLibraryView` receipt section, `CompanionManager.explainWhyMemoryWasSaved`.
 - ~~What Did You Learn About Me? — voice query + Brain tab summary grounded in active local memories.~~ **Shipped** — see `SelfKnowledgeSummary.swift`, `CompanionManager.speakWhatClickyLearnedAboutMe`, Brain tab button in `CompanionPanelView`.
 - Features should build on existing stores and UI instead of inventing a parallel memory system.
-- **Next task:** Memory Diff Timeline — version history on memory updates with receipt-linked evidence in `MemoriesLibraryView`.
+- ~~Memory Diff Timeline — show how a single memory changed over time, grounded in receipt evidence.~~ **Shipped** — see `MemoryDiffTimeline.swift`, receipt snapshots in `MemoryReceipt.swift`, and the "How this changed" section in `MemoriesLibraryView`.
+- **Next task:** Daily Brain Digest.
