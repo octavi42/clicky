@@ -29,12 +29,11 @@ enum SkillSaveStatus: Equatable {
 }
 
 /// Lifecycle of an "Ask Clicky why" receipt explanation, driven by
-/// `CompanionManager.explainWhyMemoryWasSaved` and rendered inline in the
-/// memories library detail view.
+/// `CompanionManager.explainWhyMemoryWasSaved`. Drives the button loading
+/// state while Clicky composes and speaks the answer.
 enum MemoryReceiptExplanationState: Equatable {
     case idle
     case generating(memoryID: String)
-    case presented(memoryID: String, explanationText: String)
 }
 
 @MainActor
@@ -367,10 +366,6 @@ final class CompanionManager: ObservableObject {
             let explanationText = await composeReceiptExplanationText(for: memory)
 
             guard !Task.isCancelled else { return }
-            memoryReceiptExplanationState = .presented(
-                memoryID: memory.id,
-                explanationText: explanationText
-            )
 
             ClickyAnalytics.trackMemoryReceiptExplained(
                 category: memory.category,
@@ -410,11 +405,15 @@ final class CompanionManager: ObservableObject {
                 (voiceState == .processing || voiceState == .responding) {
                 voiceState = .idle
             }
+
+            if !Task.isCancelled {
+                memoryReceiptExplanationState = .idle
+            }
         }
     }
 
-    /// Resets the inline explanation (and stops its speech) when the user
-    /// leaves the memory detail view or switches to a different memory.
+    /// Stops an in-flight explanation when the user leaves the memory detail
+    /// view or switches to a different memory.
     func clearMemoryReceiptExplanation() {
         memoryReceiptExplanationTask?.cancel()
         memoryReceiptExplanationTask = nil

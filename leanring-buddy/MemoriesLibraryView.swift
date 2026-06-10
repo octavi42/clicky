@@ -349,8 +349,6 @@ struct MemoriesLibraryView: View {
             }
 
             askClickyWhyButton(memory)
-
-            receiptExplanationContent(memory)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,18 +395,6 @@ struct MemoriesLibraryView: View {
             isHoveringAskClickyWhyButton = isHovering
         }
         .accessibilityIdentifier("clicky.panel.memories-library.ask-why")
-    }
-
-    @ViewBuilder
-    private func receiptExplanationContent(_ memory: Memory) -> some View {
-        if case .presented(let memoryID, let explanationText) = companionManager.memoryReceiptExplanationState,
-           memoryID == memory.id {
-            Text(explanationText)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
     }
 
     private func receiptContextLine(_ receipt: MemoryReceipt) -> String {
