@@ -56,6 +56,8 @@ struct MemoriesLibraryView: View {
     )
     @State private var memoryPendingDelete: Memory?
     @State private var isHoveringAskClickyWhyButton = false
+    @State private var isTimelineExpanded = false
+    @State private var isHoveringTimelineHeader = false
 
     private var filteredMemories: [Memory] {
         companionManager.memories(
@@ -202,6 +204,8 @@ struct MemoriesLibraryView: View {
             companionManager.clearMemoryReceiptExplanation()
             selectedMemory = memory
             isEditingSelectedMemory = false
+            // The timeline starts collapsed for every freshly opened memory.
+            isTimelineExpanded = false
         }) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(memory.title)
@@ -300,12 +304,200 @@ struct MemoriesLibraryView: View {
                 Spacer()
             }
 
+            memoryTimelineSection(memory)
+
             memoryReceiptSection(memory)
 
             Divider()
                 .background(DS.Colors.borderSubtle)
 
             memoryMarkdownBody(memory.body)
+        }
+    }
+
+    // MARK: - Memory Diff Timeline ("How this changed")
+
+    /// Collapsible change history for the memory, one entry per saved receipt.
+    /// Hidden entirely until the memory has been saved at least twice — a
+    /// single save has no history worth a section.
+    @ViewBuilder
+    private func memoryTimelineSection(_ memory: Memory) -> some View {
+        if MemoryDiffTimelineBuilder.shouldShowTimeline(for: memory) {
+            let timelineEntries = MemoryDiffTimelineBuilder.buildTimelineEntries(for: memory)
+
+            VStack(alignment: .leading, spacing: 0) {
+                timelineHeaderButton(timelineEntryCount: timelineEntries.count)
+
+                if isTimelineExpanded {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(timelineEntries.enumerated()), id: \.element.id) { entryIndex, timelineEntry in
+                            timelineEntryRow(
+                                timelineEntry,
+                                isNewestEntry: entryIndex == 0,
+                                isOldestEntry: entryIndex == timelineEntries.count - 1,
+                                isSkillCategory: memory.category == .skill
+                            )
+                        }
+                    }
+                    .padding(.top, 10)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .stroke(DS.Colors.borderSubtle.opacity(0.5), lineWidth: 0.8)
+                    )
+            )
+        }
+    }
+
+    private func timelineHeaderButton(timelineEntryCount: Int) -> some View {
+        Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isTimelineExpanded.toggle()
+            }
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.accent)
+
+                Text("How this changed")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(isHoveringTimelineHeader ? DS.Colors.textSecondary : DS.Colors.textTertiary)
+
+                Text("\(timelineEntryCount)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                    )
+
+                Spacer()
+
+                Image(systemName: isTimelineExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(isHoveringTimelineHeader ? DS.Colors.textSecondary : DS.Colors.textTertiary)
+            }
+            // Make the whole header row clickable, including the empty space
+            // between the title and the chevron.
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .onHover { isHovering in
+            isHoveringTimelineHeader = isHovering
+        }
+        .accessibilityIdentifier("clicky.panel.memories-library.timeline-toggle")
+    }
+
+    private func timelineEntryRow(
+        _ timelineEntry: MemoryTimelineEntry,
+        isNewestEntry: Bool,
+        isOldestEntry: Bool,
+        isSkillCategory: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            // Gutter: dot for this entry plus the connecting line down to the
+            // next (older) entry. The newest entry gets the filled accent dot.
+            VStack(spacing: 2) {
+                if isNewestEntry {
+                    Circle()
+                        .fill(DS.Colors.accent)
+                        .frame(width: 6, height: 6)
+                } else {
+                    Circle()
+                        .strokeBorder(DS.Colors.textTertiary, lineWidth: 1)
+                        .frame(width: 6, height: 6)
+                }
+
+                if !isOldestEntry {
+                    Rectangle()
+                        .fill(DS.Colors.borderSubtle)
+                        .frame(width: 1)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(timelineEntryContextLine(timelineEntry, isSkillCategory: isSkillCategory))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+
+                if let previousText = timelineEntry.previousText,
+                   let currentText = timelineEntry.currentText {
+                    timelineWasNowLine(label: "Was", text: previousText, isCurrentValue: false)
+                    timelineWasNowLine(label: "Now", text: currentText, isCurrentValue: true)
+                } else if let currentText = timelineEntry.currentText {
+                    Text("\u{201C}\(currentText)\u{201D}")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .lineLimit(2)
+                }
+
+                if let gateReasonExplanation = timelineEntry.gateReasonExplanation {
+                    Text(gateReasonExplanation)
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+
+                // Skills keep the lighter activity style: date, Saved/Updated,
+                // and the gate reason — no quoted phrase per entry.
+                if !isSkillCategory, let userPhrase = timelineEntry.userPhrase {
+                    Text("\u{201C}\(userPhrase)\u{201D}")
+                        .font(.system(size: 10))
+                        .italic()
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.bottom, isOldestEntry ? 0 : 10)
+        }
+        // Lets the gutter line stretch to the full height of the row content.
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Header line for a timeline entry: relative date, the Saved/Updated
+    /// activity label for skills, and the app name when known.
+    private func timelineEntryContextLine(
+        _ timelineEntry: MemoryTimelineEntry,
+        isSkillCategory: Bool
+    ) -> String {
+        var contextParts = [timelineEntry.relativeSavedAtLabel()]
+        if isSkillCategory {
+            contextParts.append(timelineEntry.activityLabel)
+        }
+        if let appDisplayName = timelineEntry.appDisplayName {
+            contextParts.append(appDisplayName)
+        }
+        return contextParts.joined(separator: " · ")
+    }
+
+    private func timelineWasNowLine(
+        label: String,
+        text: String,
+        isCurrentValue: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(DS.Colors.textTertiary)
+                // Fixed label column so the Was/Now quotes align vertically.
+                .frame(width: 26, alignment: .leading)
+                .padding(.top, 1)
+
+            Text("\u{201C}\(text)\u{201D}")
+                .font(.system(size: 10))
+                .foregroundColor(isCurrentValue ? DS.Colors.textSecondary : DS.Colors.textTertiary)
+                .lineLimit(2)
         }
     }
 
@@ -532,6 +724,7 @@ struct MemoriesLibraryView: View {
         selectedCategoryFilter = MemoriesCategoryFilter(memoryCategory: memory.category)
         selectedMemory = memory
         isEditingSelectedMemory = false
+        isTimelineExpanded = false
     }
 
     private func refreshSelectedMemoryIfNeeded() {
