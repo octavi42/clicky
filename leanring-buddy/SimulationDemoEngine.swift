@@ -34,6 +34,7 @@ enum FeatureDemoKind: Equatable {
     case skills
     case preferences
     case routines
+    case nicheSuggestions
 }
 
 /// One conversation beat rendered in the comparison window. A demo run is a
@@ -133,6 +134,17 @@ final class SimulationDemoEngine: ObservableObject {
     @Published private(set) var routinesDemoChipLabelProof: String?
     @Published private(set) var routinesDemoAnswerStyleProof: String?
 
+    // MARK: Niche Suggestions demo run state
+
+    @Published private(set) var nicheSuggestionsDemoRunState: FeatureDemoRunState = .notRun
+
+    /// Niche-Suggestions-card proof fields, filled progressively as run
+    /// steps complete. nil renders as an em dash placeholder in the cockpit.
+    @Published private(set) var nicheSuggestionsDemoNichePickedProof: String?
+    @Published private(set) var nicheSuggestionsDemoSimulatedFrontmostAppProof: String?
+    @Published private(set) var nicheSuggestionsDemoSuggestionModeProof: String?
+    @Published private(set) var nicheSuggestionsDemoSuggestionsShownProof: String?
+
     // MARK: Comparison playback state
 
     /// Which feature demo's script currently owns the comparison window.
@@ -174,6 +186,7 @@ final class SimulationDemoEngine: ObservableObject {
         case .skills: return skillsDemoRunState
         case .preferences: return preferencesDemoRunState
         case .routines: return routinesDemoRunState
+        case .nicheSuggestions: return nicheSuggestionsDemoRunState
         case nil: return .notRun
         }
     }
@@ -309,6 +322,7 @@ final class SimulationDemoEngine: ObservableObject {
         case .skills: runSkillsDemo()
         case .preferences: runPreferencesDemo()
         case .routines: runRoutinesDemo()
+        case .nicheSuggestions: runNicheSuggestionsDemo()
         case nil: break
         }
     }
@@ -929,6 +943,196 @@ final class SimulationDemoEngine: ObservableObject {
         }
     }
 
+    // MARK: - Niche Suggestions Demo Run
+
+    /// Plays the "Developer + Xcode" niche-suggestions arc as a before/after
+    /// conversation in the comparison window:
+    ///
+    /// 1. Left column ("No niche picked") — the niche override is REALLY
+    ///    cleared, and a fresh user in Xcode asks what Clicky can even help
+    ///    with. Without a niche, Clicky can only answer generically.
+    /// 2. Right column ("Developer + Xcode") — the Developer niche is REALLY
+    ///    saved (the real companion panel picker updates live), the frontmost
+    ///    app is simulated as Xcode, and the REAL
+    ///    `NicheDiscoveryManager.suggestionSnapshot` returns the app-aware
+    ///    suggestions from the real bundled mapping. Clicky's bubble is built
+    ///    from that snapshot, the user asks the first real suggestion, and
+    ///    gets an informed answer.
+    /// 3. A recap strip contrasts the two columns.
+    ///
+    /// Only the conversation text is scripted (the demo must not depend on
+    /// speech or network); the niche override writes and the suggestion
+    /// snapshot are the production code paths. The snapshot is deterministic
+    /// here: with an explicit override and Xcode frontmost it reads only the
+    /// static bundle-niche map and app suggestion mapping — never the
+    /// presenter's real app usage. The override is cleared by the opening
+    /// beat so every run replays the identical arc, even right after loading
+    /// the Developer profile (which sets that same override).
+    /// Calling this again (the window's Replay chip) restarts the run.
+    func runNicheSuggestionsDemo() {
+        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
+        // allowed — the clear below cancels the other demo's task first.
+        guard !nicheSuggestionsDemoRunState.isRunning else { return }
+
+        clearFeatureDemoRunPresentations()
+        nicheSuggestionsDemoRunState = .running
+
+        featureDemoRunTask = Task { [weak self] in
+            await self?.performNicheSuggestionsDemoRun()
+        }
+    }
+
+    private func performNicheSuggestionsDemoRun() async {
+        activeFeatureDemoKind = .nicheSuggestions
+        stageDemoTitle = "Niche Suggestions · Developer + Xcode"
+
+        await playDemoScript(makeNicheSuggestionsDemoScript())
+        guard !Task.isCancelled else { return }
+
+        let finishedAtDescription = lastRunTimeFormatter.string(from: Date())
+        nicheSuggestionsDemoRunState = .finished(atTimeDescription: finishedAtDescription)
+        lastRunStatusDescription = "Niche suggestions demo · \(finishedAtDescription)"
+    }
+
+    /// The Niche Suggestions demo as a conversation script. Side effects
+    /// (the real niche override writes, the real suggestion snapshot, proof
+    /// updates) execute inside the beat producers, so each real operation
+    /// fires exactly when its beat lands in its column.
+    private func makeNicheSuggestionsDemoScript() -> [DemoScriptStep] {
+        // Shared mutable state between steps. A reference type so closures
+        // created upfront all see values written by earlier steps (the
+        // snapshot step writes this; the suggestions bubble, the user's
+        // pick, and the recap all read it).
+        final class NicheSuggestionsDemoRunContext {
+            var appAwareSnapshot: NicheSuggestionSnapshot?
+        }
+        let runContext = NicheSuggestionsDemoRunContext()
+
+        return [
+            // No niche picked: the override is really cleared, so Clicky
+            // starts cold — even right after loading the Developer profile
+            // (which sets that same override).
+            DemoScriptStep(lane: .firstSession) { [self] in
+                companionManager?.clearUserNicheOverride()
+                nicheSuggestionsDemoNichePickedProof = "None yet"
+
+                return .systemEvent(
+                    iconSystemName: "person.crop.circle.badge.questionmark",
+                    label: "Fresh user · no niche picked",
+                    detail: "Real niche override cleared — the companion panel picker updates live"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .userSays(text: NicheSuggestionsDemoScript.coldOpenAskTranscript)
+            },
+            DemoScriptStep(lane: .firstSession) {
+                .clickyResponds(
+                    text: NicheSuggestionsDemoScript.genericCapabilitiesResponse,
+                    matchedSkillBadge: nil
+                )
+            },
+
+            // Developer + Xcode: the niche override is really saved, the
+            // frontmost app is simulated as Xcode, and the real suggestion
+            // snapshot produces the app-aware asks. The lane switch wakes
+            // up the right column.
+            DemoScriptStep(lane: .secondSession) { [self] in
+                companionManager?.setUserNiche(.developer)
+                nicheSuggestionsDemoNichePickedProof = "Developer"
+
+                return .systemEvent(
+                    iconSystemName: "person.crop.circle.badge.checkmark",
+                    label: "Niche picked · Developer",
+                    detail: "Real niche override saved — the companion panel picker updates live"
+                )
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                simulatedAppContextDisplayName = NicheSuggestionsDemoScript.xcodeDisplayName
+                nicheSuggestionsDemoSimulatedFrontmostAppProof = NicheSuggestionsDemoScript.xcodeDisplayName
+
+                return .systemEvent(
+                    iconSystemName: "macwindow",
+                    label: "User is in Xcode",
+                    detail: "Simulated frontmost app fed to the suggestion engine"
+                )
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                // Real suggestion engine over the simulated app context:
+                // with an explicit Developer override and Xcode frontmost
+                // this reads only static bundled data, so the result is
+                // identical on every machine.
+                let appAwareSnapshot = companionManager?.nicheSuggestionSnapshot(
+                    forSimulatedFrontmostBundleId: NicheSuggestionsDemoScript.xcodeBundleId
+                )
+                runContext.appAwareSnapshot = appAwareSnapshot
+
+                let shownSuggestionCount = appAwareSnapshot?.suggestions.count ?? 0
+                let snapshotIsAppAware = shownSuggestionCount > 0
+
+                nicheSuggestionsDemoSuggestionModeProof = appAwareSnapshot.map { snapshot in
+                    NicheSuggestionsDemoScript.suggestionModeProofDescription(for: snapshot.mode)
+                }
+                nicheSuggestionsDemoSuggestionsShownProof = snapshotIsAppAware
+                    ? "\(shownSuggestionCount) (real mapping)"
+                    : "0 (unexpected)"
+
+                lastMatchedMemoryDescription = snapshotIsAppAware
+                    ? "Niche mapping · Xcode · \(shownSuggestionCount) app-aware suggestions"
+                    : "No match"
+
+                return .systemEvent(
+                    iconSystemName: "lightbulb",
+                    label: snapshotIsAppAware
+                        ? "\(shownSuggestionCount) app-aware suggestions found for Xcode"
+                        : "Unexpected: no app-aware suggestions found",
+                    detail: "NicheDiscoveryManager.suggestionSnapshot ran for real"
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
+                // The bubble is built from the real snapshot, so the prompts
+                // shown can never drift from what the suggestion engine
+                // actually returned. Badge reflects the real snapshot result
+                // from the previous step, not a hardcoded claim.
+                .clickyResponds(
+                    text: NicheSuggestionsDemoScript.suggestionsBubbleText(
+                        from: runContext.appAwareSnapshot
+                    ),
+                    matchedSkillBadge: runContext.appAwareSnapshot?.suggestions.isEmpty == false
+                        ? "App-aware: Xcode"
+                        : nil
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
+                // The user picks the first suggestion — the ask text is the
+                // prompt the real snapshot actually returned.
+                .userSays(
+                    text: runContext.appAwareSnapshot?.suggestions.first?.prompt
+                        ?? NicheSuggestionsDemoScript.fallbackPickedSuggestionPrompt
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
+                .clickyResponds(
+                    text: NicheSuggestionsDemoScript.pickedSuggestionAnswerResponse,
+                    matchedSkillBadge: nil
+                )
+            },
+            DemoScriptStep(lane: .secondSession) { [self] in
+                let shownSuggestionCount = runContext.appAwareSnapshot?.suggestions.count ?? 0
+                let snapshotIsAppAware = shownSuggestionCount > 0
+
+                beforeAfterMetricDescription = snapshotIsAppAware
+                    ? "Suggested asks: 0 → \(shownSuggestionCount) (real app-aware mapping)"
+                    : "Suggested asks: 0 → 0 (unexpected)"
+                // Side-effect-only step: publishes the recap strip spanning
+                // both columns instead of appending a conversation row.
+                comparisonRecapText = snapshotIsAppAware
+                    ? "Blank page → \(shownSuggestionCount) app-aware asks · suggestions from the real niche mapping"
+                    : "No app-aware suggestions qualified (unexpected)"
+                return nil
+            },
+        ]
+    }
+
     // MARK: - Demo Script Player
 
     /// Plays a demo script beat by beat: runs the step's real side effects,
@@ -1001,6 +1205,12 @@ final class SimulationDemoEngine: ObservableObject {
         routinesDemoChipShownProof = nil
         routinesDemoChipLabelProof = nil
         routinesDemoAnswerStyleProof = nil
+
+        nicheSuggestionsDemoRunState = .notRun
+        nicheSuggestionsDemoNichePickedProof = nil
+        nicheSuggestionsDemoSimulatedFrontmostAppProof = nil
+        nicheSuggestionsDemoSuggestionModeProof = nil
+        nicheSuggestionsDemoSuggestionsShownProof = nil
 
         activeFeatureDemoKind = nil
         firstSessionLaneBeats = []
@@ -1250,5 +1460,56 @@ private enum RoutinesDemoScript {
         let transitionTotal = transitionsSeededPerDay * seededDayCount
         let dayWord = seededDayCount == 1 ? "day" : "days"
         return "\(transitionTotal) over \(seededDayCount) \(dayWord)"
+    }
+}
+
+/// The deterministic script behind the Niche Suggestions demo run. With an
+/// explicit Developer override and Xcode as the simulated frontmost app, the
+/// real suggestion snapshot reads only static bundled data
+/// (bundle-niche-map.json + NicheAppSuggestionMapping), so the suggestions
+/// shown are identical on every machine; the conversation text is fixed so
+/// the demo never depends on speech recognition or network.
+private enum NicheSuggestionsDemoScript {
+    static let xcodeBundleId = "com.apple.dt.Xcode"
+    static let xcodeDisplayName = "Xcode"
+
+    // Before: no niche picked, so the user doesn't know what to ask and
+    // Clicky can only answer generically.
+    static let coldOpenAskTranscript = "I just opened Xcode. What can you even help me with here?"
+    static let genericCapabilitiesResponse = "I can see your screen and explain anything on it — tell me what you're trying to do and I'll walk you through it."
+
+    // After: the user taps the first app-aware suggestion and gets an
+    // informed, pointing-ready answer.
+    static let pickedSuggestionAnswerResponse = "⌘2 opens the Source Control navigator — that's where commits live. I'd fly over and point at it on your screen right now."
+
+    /// Shown only if the real snapshot unexpectedly returns no suggestions,
+    /// so the conversation arc can still complete.
+    static let fallbackPickedSuggestionPrompt = "How do I commit from Xcode? Point at the Source Control menu."
+
+    /// Builds Clicky's suggestions bubble from the REAL snapshot: the real
+    /// context label followed by the real prompts, so the bubble can never
+    /// drift from what the suggestion engine returned.
+    static func suggestionsBubbleText(from appAwareSnapshot: NicheSuggestionSnapshot?) -> String {
+        guard let appAwareSnapshot, !appAwareSnapshot.suggestions.isEmpty else {
+            return "I don't have app-aware suggestions for this screen yet — tell me what you're working on and I'll help from there."
+        }
+
+        let suggestionLines = appAwareSnapshot.suggestions
+            .map { suggestion in "• \(suggestion.prompt)" }
+            .joined(separator: "\n")
+        return "\(appAwareSnapshot.contextLabel)\n\(suggestionLines)"
+    }
+
+    /// Human-readable proof text for the snapshot mode. With an explicit
+    /// niche override the app-aware branch reports `.userOverride`, which
+    /// the proof field spells out as a user-picked niche.
+    static func suggestionModeProofDescription(for suggestionMode: NicheSuggestionSnapshot.Mode) -> String {
+        switch suggestionMode {
+        case .userOverride: return "app-aware (user-picked niche)"
+        case .appAware: return "app-aware (inferred niche)"
+        case .usageBased: return "usage-based"
+        case .profileBiased: return "profile-biased"
+        case .generalFallback: return "general fallback (unexpected)"
+        }
     }
 }

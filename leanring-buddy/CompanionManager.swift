@@ -988,6 +988,15 @@ final class CompanionManager: ObservableObject {
         refreshNicheSuggestions()
     }
 
+    /// Runs the REAL suggestion-snapshot path with an injected frontmost
+    /// bundle id instead of the actual frontmost app. Used by the presenter
+    /// demo engine so the Niche Suggestions demo can prove the production
+    /// path with a deterministic simulated app context (same injection idea
+    /// as the E2E `e2eFrontmostBundleId` seam).
+    func nicheSuggestionSnapshot(forSimulatedFrontmostBundleId simulatedFrontmostBundleId: String?) -> NicheSuggestionSnapshot {
+        nicheDiscoveryManager.suggestionSnapshot(frontmostBundleId: simulatedFrontmostBundleId)
+    }
+
     func refreshNicheSuggestions() {
         nicheDiscoveryManager.refreshInferredProfile()
         inferredUserNiche = nicheDiscoveryManager.inferredNiche

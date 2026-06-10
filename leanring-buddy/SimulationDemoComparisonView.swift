@@ -14,9 +14,8 @@
 //  - A recap strip spanning both columns lands last.
 //
 //  The view is demo-agnostic: it renders whatever lane beats the engine
-//  publishes. Each feature demo (Skills, Preferences, Routines, …) only
-//  contributes its script and per-lane header copy; future cards (Niche)
-//  reuse it the same way.
+//  publishes. Each feature demo (Skills, Preferences, Routines, Niche
+//  Suggestions) only contributes its script and per-lane header copy.
 //
 
 import SwiftUI
@@ -114,6 +113,13 @@ struct SimulationDemoComparisonView: View {
                 firstSubtitle: "Clicky quietly notices repeated switches",
                 secondEyebrow: "TODAY",
                 secondSubtitle: "The pattern clears the recurrence bar"
+            )
+        case .nicheSuggestions:
+            return (
+                firstEyebrow: "NO NICHE PICKED",
+                firstSubtitle: "Clicky doesn't know what to suggest yet",
+                secondEyebrow: "DEVELOPER + XCODE",
+                secondSubtitle: "App-aware suggestions from the real mapping"
             )
         case .skills, nil:
             return (

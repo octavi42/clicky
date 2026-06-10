@@ -10,11 +10,11 @@
 //  in a meeting without depending on live speech recognition, network timing,
 //  or macOS permissions.
 //
-//  Current state: the demo state strip, demo profile chips, reset, the
-//  Skills, Preferences, and Routines feature cards (scripted runs that play
-//  in the separate before/after comparison window), and the proof panel are
-//  wired to SimulationDemoEngine. The Niche Suggestions card and the Ask
-//  Clicky quick actions still render placeholder content.
+//  Current state: the demo state strip, demo profile chips, reset, all four
+//  feature cards (Skills, Preferences, Routines, Niche Suggestions —
+//  scripted runs that play in the separate before/after comparison window),
+//  and the proof panel are wired to SimulationDemoEngine. The Ask Clicky
+//  quick actions still render placeholder content.
 //
 
 import SwiftUI
@@ -141,20 +141,6 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Feature Demo Cards
 
-    /// Static descriptor for the one demo card that is not wired to the
-    /// engine yet. The Skills, Preferences, and Routines cards are live and
-    /// built separately in `skillsFeatureDemoCard` /
-    /// `preferencesFeatureDemoCard` / `routinesFeatureDemoCard`.
-    private static let nicheSuggestionsFeatureDemoCardPlaceholder = FeatureDemoCardPlaceholder(
-        categoryLabel: "Niche Suggestions",
-        scenarioTitle: "Developer + Xcode",
-        iconSystemName: "lightbulb.fill",
-        explanation: "Proves Clicky helps users know what to ask before it has learned much about them.",
-        proofFieldLabels: [
-            "App-aware suggestions shown",
-        ]
-    )
-
     /// Lays out the cards two per row at equal height. The fixedSize +
     /// maxHeight pattern stretches the shorter card to match the taller one,
     /// so Run buttons in the same row always sit on the same baseline.
@@ -174,7 +160,7 @@ struct SimulationControlPanelView: View {
                 HStack(alignment: .top, spacing: DS.Spacing.md) {
                     routinesFeatureDemoCard
                         .frame(maxHeight: .infinity)
-                    featureDemoCard(Self.nicheSuggestionsFeatureDemoCardPlaceholder)
+                    nicheSuggestionsFeatureDemoCard
                         .frame(maxHeight: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -440,6 +426,92 @@ struct SimulationControlPanelView: View {
         .simulationCardSurface()
     }
 
+    // MARK: - Niche Suggestions Card (live)
+
+    /// Live Niche Suggestions card. Run opens the before/after comparison
+    /// window and plays the scripted "Developer + Xcode" arc there, driving
+    /// the real niche override writes and the real suggestion-snapshot path;
+    /// the card stays a compact dashboard whose proof values stream in as
+    /// the run advances.
+    private var nicheSuggestionsFeatureDemoCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.accentText)
+
+                Text("NICHE SUGGESTIONS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                Spacer()
+
+                demoRunStatusIndicator(for: simulationDemoEngine.nicheSuggestionsDemoRunState)
+            }
+
+            Text("Developer + Xcode")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .padding(.top, 10)
+
+            Text("Proves Clicky helps users know what to ask before it has learned much about them.")
+                .font(.system(size: 11))
+                .lineSpacing(2)
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
+            Rectangle()
+                .fill(DS.Colors.borderSubtle.opacity(0.5))
+                .frame(height: 0.5)
+                .padding(.top, DS.Spacing.md)
+
+            VStack(spacing: 6) {
+                liveProofFieldRow(
+                    label: "Niche picked",
+                    value: simulationDemoEngine.nicheSuggestionsDemoNichePickedProof
+                )
+                liveProofFieldRow(
+                    label: "Simulated frontmost app",
+                    value: simulationDemoEngine.nicheSuggestionsDemoSimulatedFrontmostAppProof
+                )
+                liveProofFieldRow(
+                    label: "Suggestion mode",
+                    value: simulationDemoEngine.nicheSuggestionsDemoSuggestionModeProof
+                )
+                liveProofFieldRow(
+                    label: "App-aware suggestions shown",
+                    value: simulationDemoEngine.nicheSuggestionsDemoSuggestionsShownProof
+                )
+            }
+            .padding(.top, DS.Spacing.md)
+
+            Spacer(minLength: DS.Spacing.lg)
+
+            HStack {
+                SimulationControlPanelRunButton(
+                    isRunning: simulationDemoEngine.nicheSuggestionsDemoRunState.isRunning,
+                    action: {
+                        // Surface the comparison window first, then start the
+                        // run so the audience sees the conversation from its
+                        // opening beat.
+                        NotificationCenter.default.post(
+                            name: .clickyOpenSimulationDemoComparisonWindow,
+                            object: nil
+                        )
+                        simulationDemoEngine.runNicheSuggestionsDemo()
+                    }
+                )
+
+                Spacer()
+            }
+        }
+        .padding(DS.Spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .simulationCardSurface()
+    }
+
     /// Status pill for a live feature card, mapping its engine run state to
     /// the shared indicator styles.
     @ViewBuilder
@@ -469,72 +541,6 @@ struct SimulationControlPanelView: View {
                 .foregroundColor(value == nil ? DS.Colors.textSecondary : DS.Colors.success)
                 .multilineTextAlignment(.trailing)
         }
-    }
-
-    private func featureDemoCard(_ featureDemoCardPlaceholder: FeatureDemoCardPlaceholder) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: featureDemoCardPlaceholder.iconSystemName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.Colors.accentText)
-
-                Text(featureDemoCardPlaceholder.categoryLabel.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundColor(DS.Colors.textTertiary)
-
-                Spacer()
-
-                statusIndicator(text: "Not run")
-            }
-
-            Text(featureDemoCardPlaceholder.scenarioTitle)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
-                .padding(.top, 10)
-
-            Text(featureDemoCardPlaceholder.explanation)
-                .font(.system(size: 11))
-                .lineSpacing(2)
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
-
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.5))
-                .frame(height: 0.5)
-                .padding(.top, DS.Spacing.md)
-
-            VStack(spacing: 6) {
-                ForEach(featureDemoCardPlaceholder.proofFieldLabels, id: \.self) { proofFieldLabel in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(proofFieldLabel)
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.Colors.textTertiary)
-
-                        Spacer(minLength: DS.Spacing.md)
-
-                        Text("—")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(DS.Colors.textSecondary)
-                    }
-                }
-            }
-            .padding(.top, DS.Spacing.md)
-
-            Spacer(minLength: DS.Spacing.lg)
-
-            HStack {
-                SimulationControlPanelRunButton(action: {
-                    // Demo run action is not wired yet — skeleton placeholder.
-                })
-
-                Spacer()
-            }
-        }
-        .padding(DS.Spacing.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .simulationCardSurface()
     }
 
     // MARK: - Demo Profiles
@@ -821,23 +827,4 @@ struct SimulationControlPanelChipButton: View {
         }
         return isHovered ? DS.Colors.surface3 : DS.Colors.surface2
     }
-}
-
-
-// MARK: - Feature Demo Card Model
-
-/// Static descriptor for one feature demo card in the skeleton UI.
-private struct FeatureDemoCardPlaceholder: Identifiable {
-    /// Eyebrow label naming the memory feature this card demos (e.g. "Skills").
-    let categoryLabel: String
-    /// The concrete demo scenario shown as the card title (e.g. "Xcode Commit Flow").
-    let scenarioTitle: String
-    let iconSystemName: String
-    /// One-sentence summary of what the scenario proves, rendered inline
-    /// under the title. Purely informational — never mutates demo state.
-    let explanation: String
-    /// Proof readouts that will display live values once the demo engine lands.
-    let proofFieldLabels: [String]
-
-    var id: String { categoryLabel + scenarioTitle }
 }
