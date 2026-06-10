@@ -1,0 +1,50 @@
+---
+description: Git workflow for roadmap-ideas worktree — one branch per task, preserve commit history
+alwaysApply: true
+---
+
+# Roadmap Ideas Git Workflow
+
+This worktree implements Brain roadmap tasks one at a time. Follow this loop unless the user says otherwise.
+
+## Per-task loop
+
+1. Sync: `git checkout main && git pull`
+2. Branch: `git checkout -b feature/<task-slug>` (e.g. `feature/memory-receipts`)
+3. Commit often — one logical change per commit
+4. When satisfied: merge to `main` with `--no-ff` to preserve every commit and leave a clear task boundary
+5. Delete the task branch after merge (optional)
+6. Start the next task from updated `main`
+
+## Commit messages
+
+Use prefixes that map to the roadmap slice:
+
+```
+brain(receipts): persist gate reason on auxiliary memories
+brain(summary): handle "what did you learn about me?" voice query
+```
+
+## Merge strategy
+
+- Prefer `git merge --no-ff feature/<task-slug>` — keeps full commit history inside each merge bubble
+- Do not squash unless the user explicitly asks
+- Do not use one long-lived branch for all roadmap features
+
+## Task branch map
+
+| Task | Branch slug | Status |
+|------|-------------|--------|
+| Memory Receipts | `feature/memory-receipts` | Done (PR #14) |
+| What Did You Learn About Me? | `feature/what-did-you-learn` | Done (implemented 2026-06-10) |
+| Memory Diff Timeline | `feature/memory-diff-timeline` | Done (PR #16) |
+| Daily Brain Digest | `feature/daily-brain-digest` | **Next** |
+| Memory Hygiene Coach | `feature/memory-hygiene-coach` | Pending |
+| Unique Stuff You Do | `feature/unique-behavior-insights` | Pending |
+| Native Tasks / Timer | `feature/context-tasks-timer` | Pending |
+
+## Agent behavior
+
+- Only create commits when the user asks
+- Only push or open PRs when the user asks
+- Reference `docs/plans/START_HERE-roadmap-ideas.md` for feature scope and build order

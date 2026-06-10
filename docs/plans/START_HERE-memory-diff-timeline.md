@@ -14,7 +14,7 @@ Roadmap task **#3 — Implemented 2026-06-10** on this branch, following the rec
 |---|------|--------|-----|
 | 1 | Memory Receipts | **Done** | [#14](https://github.com/octavi42/clicky/pull/14) |
 | 2 | What Did You Learn About Me? | **Done** | [#15](https://github.com/octavi42/clicky/pull/15) |
-| 3 | **Memory Diff Timeline** | **Done** (implemented 2026-06-10) | `feature/memory-diff-timeline` |
+| 3 | **Memory Diff Timeline** | **Done** (merged 2026-06-10) | [#16](https://github.com/octavi42/clicky/pull/16) |
 
 ## Product arc (why this feature exists)
 

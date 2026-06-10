@@ -10,8 +10,8 @@ Data home: `/tmp/clicky-roadmap-ideas`
 |---|------|--------|-------------|
 | 1 | Memory Receipts | **Done** (merged 2026-06-10) | `feature/memory-receipts` → [PR #14](https://github.com/octavi42/clicky/pull/14) |
 | 2 | What Did You Learn About Me? | **Done** (implemented 2026-06-10) | `feature/what-did-you-learn` |
-| 3 | Memory Diff Timeline | **Done** (implemented 2026-06-10) — see [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) | `feature/memory-diff-timeline` |
-| 4 | Daily Brain Digest | Pending | `feature/daily-brain-digest` |
+| 3 | Memory Diff Timeline | **Done** (merged 2026-06-10) — see [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) | `feature/memory-diff-timeline` → [PR #16](https://github.com/octavi42/clicky/pull/16) |
+| 4 | Daily Brain Digest | **Next** — see [START_HERE-daily-brain-digest.md](./START_HERE-daily-brain-digest.md) | `feature/daily-brain-digest` |
 | 5 | Memory Hygiene Coach | Pending | `feature/memory-hygiene-coach` |
 | 6 | Unique Stuff You Do | Pending | `feature/unique-behavior-insights` |
 | 7 | Native Tasks / Timer | Pending | `feature/context-tasks-timer` |
@@ -229,8 +229,8 @@ Prefer `--no-ff` merges (not squash) so every commit stays visible inside a merg
 |------|--------|--------|
 | Memory Receipts | `feature/memory-receipts` | Done (PR #14) |
 | What Did You Learn About Me? | `feature/what-did-you-learn` | Done (implemented 2026-06-10) |
-| Memory Diff Timeline | `feature/memory-diff-timeline` | Done (implemented 2026-06-10) |
-| Daily Brain Digest | `feature/daily-brain-digest` | Pending |
+| Memory Diff Timeline | `feature/memory-diff-timeline` | Done ([PR #16](https://github.com/octavi42/clicky/pull/16)) |
+| Daily Brain Digest | `feature/daily-brain-digest` | **Next** |
 | Memory Hygiene Coach | `feature/memory-hygiene-coach` | Pending |
 | Unique Stuff You Do | `feature/unique-behavior-insights` | Pending |
 | Native Tasks / Timer | `feature/context-tasks-timer` | Pending |
@@ -254,4 +254,4 @@ Cursor rule: `.cursor/rules/roadmap-ideas-git-workflow.mdc`
 - ~~What Did You Learn About Me? — voice query + Brain tab summary grounded in active local memories.~~ **Shipped** — see `SelfKnowledgeSummary.swift`, `CompanionManager.speakWhatClickyLearnedAboutMe`, Brain tab button in `CompanionPanelView`.
 - Features should build on existing stores and UI instead of inventing a parallel memory system.
 - ~~Memory Diff Timeline — show how a single memory changed over time, grounded in receipt evidence.~~ **Shipped** — see `MemoryDiffTimeline.swift`, receipt snapshots in `MemoryReceipt.swift`, and the "How this changed" section in `MemoriesLibraryView`.
-- **Next task:** Daily Brain Digest.
+- **Next task:** Daily Brain Digest — read [START_HERE-daily-brain-digest.md](./START_HERE-daily-brain-digest.md) first; branch `feature/daily-brain-digest` is checked out in the roadmap worktree.
