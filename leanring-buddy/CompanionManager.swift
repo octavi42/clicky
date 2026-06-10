@@ -36,6 +36,14 @@ enum MemoryReceiptExplanationState: Equatable {
     case generating(memoryID: String)
 }
 
+/// Lifecycle of a spoken "What did you learn about me?" summary, driven by
+/// `CompanionManager.speakWhatClickyLearnedAboutMe`. Drives the Brain tab
+/// button loading state while Clicky composes and speaks the answer.
+enum SelfKnowledgeSummaryState: Equatable {
+    case idle
+    case generating
+}
+
 @MainActor
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
@@ -161,6 +169,9 @@ final class CompanionManager: ObservableObject {
     /// Progress of the "Ask Clicky why" spoken receipt explanation.
     @Published private(set) var memoryReceiptExplanationState: MemoryReceiptExplanationState = .idle
 
+    /// Progress of the spoken "What did you learn about me?" summary.
+    @Published private(set) var selfKnowledgeSummaryState: SelfKnowledgeSummaryState = .idle
+
     /// When disabled, Clicky still reads skills but will not create new ones.
     @Published var isLearningFromSessionsEnabled: Bool = ClickyDefaults.shared.object(forKey: "isLearningFromSessionsEnabled") == nil
         ? true
@@ -217,6 +228,15 @@ final class CompanionManager: ObservableObject {
     /// `clearMemoryReceiptExplanation` only stops audio and resets state when
     /// this is set, so it never interrupts an unrelated voice response.
     private var isReceiptExplanationSpeechActive = false
+
+    /// The in-flight "What did you learn about me?" summary, if any. Cancelled
+    /// when the user requests another summary or leaves the Brain tab.
+    private var selfKnowledgeSummaryTask: Task<Void, Never>?
+
+    /// True while the self-knowledge summary owns TTS playback / the voice
+    /// state. `clearSelfKnowledgeSummary` only stops audio and resets state
+    /// when this is set, so it never interrupts an unrelated voice response.
+    private var isSelfKnowledgeSummarySpeechActive = false
     private let memorySavedToastManager = CompanionResponseOverlayManager()
 
     /// Path to the Clicky.app bundle for this run. Shown when TCC must target this build.
@@ -452,6 +472,141 @@ final class CompanionManager: ObservableObject {
             // back to a template sentence composed from the receipt facts.
             print("⚠️ Failed to generate receipt explanation, using deterministic fallback: \(error)")
             return ReceiptExplanationPromptBuilder.buildDeterministicFallbackExplanation(receipt: latestReceipt)
+        }
+    }
+
+    // MARK: - Self-Knowledge Summary ("What did you learn about me?")
+
+    /// Generates and speaks a grounded summary of what Clicky currently knows
+    /// about the user, triggered from the Brain tab button. Uses only active
+    /// local memories — same data and same composer as the voice query path.
+    func speakWhatClickyLearnedAboutMe() {
+        selfKnowledgeSummaryTask?.cancel()
+        if isSelfKnowledgeSummarySpeechActive {
+            elevenLabsTTSClient.stopPlayback()
+            isSelfKnowledgeSummarySpeechActive = false
+        }
+        selfKnowledgeSummaryState = .generating
+
+        selfKnowledgeSummaryTask = Task {
+            let summaryText = await composeSelfKnowledgeSummaryText()
+
+            guard !Task.isCancelled else { return }
+
+            ClickyAnalytics.trackSelfKnowledgeSummarySpoken(
+                trigger: "button",
+                activeMemoryCount: memories.filter { $0.status == .active }.count
+            )
+
+            // Only drive the cursor overlay's voice state when Clicky is idle.
+            // If a push-to-talk interaction is active, speaking states belong
+            // to that pipeline and must not be stomped from the panel.
+            let shouldDriveVoiceState = (voiceState == .idle)
+
+            isSelfKnowledgeSummarySpeechActive = true
+            do {
+                if shouldDriveVoiceState { voiceState = .processing }
+                try await elevenLabsTTSClient.speakText(summaryText)
+                if shouldDriveVoiceState { voiceState = .responding }
+
+                // speakText returns once playback *starts*; hold the responding
+                // state until the audio finishes, mirroring the main pipeline.
+                while elevenLabsTTSClient.isPlaying {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    if Task.isCancelled { break }
+                }
+            } catch is CancellationError {
+                // Superseded by a newer summary or the user left the Brain tab.
+            } catch {
+                ClickyAnalytics.trackTTSError(error: error.localizedDescription)
+                print("⚠️ ElevenLabs TTS error during self-knowledge summary: \(error)")
+                speakCreditsErrorFallback()
+            }
+            isSelfKnowledgeSummarySpeechActive = false
+
+            // Return the cursor to idle only if this summary still owns the
+            // state (a push-to-talk start would have changed it already).
+            if shouldDriveVoiceState && !Task.isCancelled &&
+                (voiceState == .processing || voiceState == .responding) {
+                voiceState = .idle
+            }
+
+            if !Task.isCancelled {
+                selfKnowledgeSummaryState = .idle
+            }
+        }
+    }
+
+    /// Stops an in-flight summary when the user switches away from the Brain tab.
+    func clearSelfKnowledgeSummary() {
+        selfKnowledgeSummaryTask?.cancel()
+        selfKnowledgeSummaryTask = nil
+        if isSelfKnowledgeSummarySpeechActive {
+            elevenLabsTTSClient.stopPlayback()
+            isSelfKnowledgeSummarySpeechActive = false
+            if voiceState == .processing || voiceState == .responding {
+                voiceState = .idle
+            }
+        }
+        selfKnowledgeSummaryState = .idle
+    }
+
+    /// Gathers every active memory category and composes the spoken answer to
+    /// "what did you learn about me?". Grounded in local store data only:
+    /// returns an honest canned answer when nothing has been learned yet, and
+    /// a deterministic counts-based summary when the Claude call fails.
+    private func composeSelfKnowledgeSummaryText() async -> String {
+        let activeSkills = teachingSkillStore.skills(withStatus: .active).map(Memory.init(skill:))
+        let activePreferences = auxiliaryMemoryStore.memories(for: .preference).filter { $0.status == .active }
+        let activeRoutines = auxiliaryMemoryStore.memories(for: .routine).filter { $0.status == .active }
+        let nicheDisplayName = nicheDiscoveryManager.effectiveNiche?.displayName
+
+        let hasAnyActiveMemories = !activeSkills.isEmpty || !activePreferences.isEmpty || !activeRoutines.isEmpty
+        guard hasAnyActiveMemories else {
+            return SelfKnowledgePromptBuilder.emptyMemoryStateAnswer
+        }
+
+        // Vault contents stay private — only the note count is shared as a
+        // fact, and only when the user opted in by connecting a vault.
+        let vaultNoteCount: Int? = personalKnowledgeManager.hasConnectedVault
+            ? personalKnowledgeManager.countSearchableMarkdownFiles()
+            : nil
+
+        let summaryUserPrompt = SelfKnowledgePromptBuilder.buildSummaryUserPrompt(
+            activeSkills: activeSkills,
+            activePreferences: activePreferences,
+            activeRoutines: activeRoutines,
+            nicheDisplayName: nicheDisplayName,
+            vaultNoteCount: vaultNoteCount
+        )
+
+        do {
+            let response = try await claudeAPI.sendTextMessage(
+                systemPrompt: SelfKnowledgePromptBuilder.summarySystemPrompt,
+                userPrompt: summaryUserPrompt,
+                maxTokens: 300
+            )
+
+            let trimmedSummary = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedSummary.isEmpty else {
+                return SelfKnowledgePromptBuilder.buildDeterministicFallbackSummary(
+                    activeSkillCount: activeSkills.count,
+                    activePreferenceCount: activePreferences.count,
+                    activeRoutineCount: activeRoutines.count,
+                    nicheDisplayName: nicheDisplayName
+                )
+            }
+            return trimmedSummary
+        } catch {
+            // Both the voice query and the button must still answer when
+            // Claude is unreachable — fall back to grounded counts.
+            print("⚠️ Failed to generate self-knowledge summary, using deterministic fallback: \(error)")
+            return SelfKnowledgePromptBuilder.buildDeterministicFallbackSummary(
+                activeSkillCount: activeSkills.count,
+                activePreferenceCount: activePreferences.count,
+                activeRoutineCount: activeRoutines.count,
+                nicheDisplayName: nicheDisplayName
+            )
         }
     }
 
@@ -2338,13 +2493,39 @@ final class CompanionManager: ObservableObject {
                     return
                 }
 
-                let shouldRetrievePersonalKnowledge = VaultIntentDetector.shouldRetrievePersonalKnowledge(transcript: transcript)
+                // "about me" questions are answered from the local memory
+                // stores, so they must win over the broader vault-retrieval
+                // intent ("what do you know about…") that could also match.
+                let isSelfKnowledgeQuery = SelfKnowledgeIntentDetector.isSelfKnowledgeQuery(transcript: transcript)
+
+                let shouldRetrievePersonalKnowledge = !isSelfKnowledgeQuery
+                    && VaultIntentDetector.shouldRetrievePersonalKnowledge(transcript: transcript)
                     && personalKnowledgeManager.hasConnectedVault
 
                 let fullResponseText: String
                 var screenCaptures: [CompanionScreenCapture] = []
 
-                if shouldRetrievePersonalKnowledge {
+                if isSelfKnowledgeQuery {
+                    // Self-knowledge questions are text-only — the answer comes
+                    // entirely from local stores, so skip screen capture and
+                    // the vision API for speed and privacy.
+                    print("🧠 Self-knowledge query — summarizing active memories (no screenshots)")
+
+                    lastUserPromptForE2E = transcript
+                    ClickyE2EConfiguration.writeLastUserPromptForE2E(transcript)
+                    lastSystemPrompt = SelfKnowledgePromptBuilder.summarySystemPrompt
+                    ClickyE2EConfiguration.writeLastSystemPromptForE2E(SelfKnowledgePromptBuilder.summarySystemPrompt)
+                    lastVaultNotesUsed = []
+
+                    // Never throws: Claude failures fall back to a
+                    // deterministic counts summary inside the composer.
+                    fullResponseText = await composeSelfKnowledgeSummaryText()
+
+                    ClickyAnalytics.trackSelfKnowledgeSummarySpoken(
+                        trigger: "voice",
+                        activeMemoryCount: memories.filter { $0.status == .active }.count
+                    )
+                } else if shouldRetrievePersonalKnowledge {
                     // Vault questions are text-only — skip screen capture and vision API.
                     // Sending multi-monitor JPEGs blocks the main thread during base64 encoding
                     // and adds several seconds of latency for no benefit.
