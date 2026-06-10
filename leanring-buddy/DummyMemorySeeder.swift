@@ -48,6 +48,19 @@ enum DummyMemorySeeder {
                 usageCount: 5,
                 isPinned: false,
                 taskSlug: "save",
+                receipts: [
+                    MemoryReceipt(
+                        savedAt: Date().addingTimeInterval(-86400),
+                        sessionId: UUID(),
+                        gateReasons: [.userConfirmed, .screenTeaching],
+                        appBundleId: "com.apple.TextEdit",
+                        userAsk: "how do I save this document?",
+                        triggerPhrase: "perfect, that worked",
+                        assistantAnswerSummary: "press command s, pick a folder and filename, then click save.",
+                        userConfirmedItWorked: true,
+                        updatedExistingMemory: false
+                    )
+                ],
                 body: """
                 1. Click **File** in the menu bar.
                 2. Choose **Save** (or press ⌘S).
@@ -117,7 +130,20 @@ enum DummyMemorySeeder {
                 Offer to expand only if the user asks follow-up questions.
                 """,
                 usageCount: 2,
-                lastUsed: Date().addingTimeInterval(-259200)
+                lastUsed: Date().addingTimeInterval(-259200),
+                receipts: [
+                    MemoryReceipt(
+                        savedAt: Date().addingTimeInterval(-259200),
+                        sessionId: UUID(),
+                        gateReasons: [.statedPreference],
+                        appBundleId: "com.apple.dt.Xcode",
+                        userAsk: "can you explain what this function does?",
+                        triggerPhrase: "keep answers short from now on",
+                        assistantAnswerSummary: "short version: it parses the config file and falls back to defaults.",
+                        userConfirmedItWorked: false,
+                        updatedExistingMemory: false
+                    )
+                ]
             ),
             Memory(
                 id: "pref-dark-apps",

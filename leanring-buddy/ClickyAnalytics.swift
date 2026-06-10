@@ -169,6 +169,14 @@ enum ClickyAnalytics {
         ])
     }
 
+    static func trackMemoryReceiptExplained(category: MemoryCategory, memoryID: String, hadReceipt: Bool) {
+        PostHogSDK.shared.capture("memory_receipt_explained", properties: [
+            "category": category.rawValue,
+            "memory_id": memoryID,
+            "had_receipt": hadReceipt
+        ])
+    }
+
     static func trackTeachingSkillDeleted(skillID: String) {
         PostHogSDK.shared.capture("teaching_skill_deleted", properties: [
             "skill_id": skillID

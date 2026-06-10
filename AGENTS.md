@@ -48,12 +48,14 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 
 **Transient Cursor Mode**: When "Show Clicky" is off, pressing the hotkey fades in the cursor overlay for the duration of the interaction (recording → response → TTS → optional pointing), then fades it out automatically after 1 second of inactivity.
 
+**Memory Receipts**: Every distill save (skill, preference, routine) captures a self-contained `MemoryReceipt` — gate reasons, verbatim user phrases, app bundle ID, session ID — because session JSONs expire after 7 days and cannot be referenced later. Preferences and routines embed receipts inside `auxiliary-memories.json` (decoding tolerates legacy files without the key); skills persist them as a `receipts.json` sidecar next to SKILL.md so transcript text stays out of YAML frontmatter. The "Ask Clicky why" button in the memories library speaks a Claude-generated explanation hard-grounded in receipt facts, with a deterministic template fallback when Claude is unreachable and an honest canned answer for pre-receipt memories.
+
 ## Key Files
 
 | File | Lines | Purpose |
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~89 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate` which creates `MenuBarPanelManager` and starts `CompanionManager`. No main window — the app lives entirely in the status bar. |
-| `CompanionManager.swift` | ~2300 | Central state machine. Owns dictation, shortcut monitoring, screen capture, Claude API, ElevenLabs TTS, overlay management, teaching skills, preference/routine memory distillation, and niche discovery. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → Claude → TTS → pointing pipeline. |
+| `CompanionManager.swift` | ~2900 | Central state machine. Owns dictation, shortcut monitoring, screen capture, Claude API, ElevenLabs TTS, overlay management, teaching skills, preference/routine memory distillation, memory receipt capture, spoken receipt explanations ("Ask Clicky why"), and niche discovery. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → Claude → TTS → pointing pipeline. |
 | `MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
 | `CompanionPanelView.swift` | ~850 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, niche onboarding/suggestions, teaching skills UI, model picker (Sonnet/Opus), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
 | `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
@@ -79,8 +81,8 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `SessionStore.swift` | ~100 | Filesystem store for voice sessions at `~/.clicky/sessions/<yyyy-MM-dd>/<sessionId>.json` with ISO8601 JSON encoding and 7-day retention cleanup. |
 | `MemoryGate.swift` | ~250 | Cold-path gate: cheap rules over a `PersistedSession` deciding whether to distill skills, preferences, and routines. Runs after session finalize. |
 | `PreferenceSignalDetector.swift` | ~110 | Deterministic phrase matching for stated user preferences in session transcripts. Used by MemoryGate. |
-| `TeachingSkillStore.swift` | ~100 | Create/read/update/delete teaching skills at `~/.clicky/skills/<name>/SKILL.md`. |
-| `TeachingSkill.swift` | ~280 | Model and YAML frontmatter parsing for teaching skills. |
+| `TeachingSkillStore.swift` | ~135 | Create/read/update/delete teaching skills at `~/.clicky/skills/<name>/SKILL.md`. Persists each skill's save receipts as a `receipts.json` sidecar in the skill folder. |
+| `TeachingSkill.swift` | ~400 | Model and YAML frontmatter parsing for teaching skills. Carries `receipts` (persisted via sidecar, not frontmatter). |
 | `SkillMatcher.swift` | ~170 | App/topic matching and duplicate skill pair detection. |
 | `SkillCurator.swift` | ~175 | Time-based stale/archive lifecycle plus throttled LLM merge/patch passes. |
 | `SkillSynthesizer.swift` | ~120 | Post-session skill drafting via Claude API. |
@@ -92,10 +94,11 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `SkillTriggerEvaluator.swift` | ~110 | Shared heuristics for MemoryGate and skill synthesis (confirmation phrases, topic extraction, screen-teaching detection). |
 | `TeachingPromptBuilder.swift` | ~100 | Composes voice response system prompt with matched teaching skills, active preferences, and matched routines. |
 | `TeachingSkillsLibraryView.swift` | ~260 | Full skills library UI with status filters, detail view, pin/delete/restore. |
-| `Memory.swift` | ~135 | Category-aware memory model and `MemoryEdit` for the unified memories UI. |
+| `Memory.swift` | ~170 | Category-aware memory model and `MemoryEdit` for the unified memories UI. Carries `receipts` save evidence with decoding that tolerates legacy files without the key. |
+| `MemoryReceipt.swift` | ~260 | Self-contained save-evidence model (gate reasons, verbatim user phrases, app, session ID) captured at distill time. Includes the capture builder, per-memory receipt cap, `GateReason` display labels, and the grounded "Ask Clicky why" explanation prompt builder with deterministic fallback. |
 | `AuxiliaryMemoryStore.swift` | ~78 | Persists preference and routine memories at `~/.clicky/auxiliary-memories.json`. |
-| `MemoriesLibraryView.swift` | ~460 | Unified memories library with category tabs, detail view, edit, and delete. |
-| `DummyMemorySeeder.swift` | ~146 | DEBUG-only seeder for sample memories during local development. |
+| `MemoriesLibraryView.swift` | ~590 | Unified memories library with category tabs, detail view, edit, and delete. Detail view shows the save receipt ("Why Clicky saved this") and the "Ask Clicky why" spoken explanation. |
+| `DummyMemorySeeder.swift` | ~175 | DEBUG-only seeder for sample memories (including sample receipts) during local development. |
 | `ClickyE2EConfiguration.swift` | ~75 | Launch flags and E2E debug artifact paths for automated tests. |
 | `NicheDiscoveryManager.swift` | ~175 | Niche onboarding, static/app-aware suggestion cards, local override loading. |
 | `ActivityStore.swift` | ~155 | Persists app-to-app transition edges to `ClickyPaths.activity` for passive routine detection. |
@@ -105,6 +108,7 @@ Worker vars: `ELEVENLABS_VOICE_ID`
 | `Resources/niche-examples.json` | ~80 | Bundled niche suggestion packs and app-specific prompt maps. |
 | `leanring-buddyTests/TeachingSkillTests.swift` | ~320 | Unit tests for skill parsing, matching, triggers, prompt injection, duplicate detection. |
 | `leanring-buddyTests/MemoryTests.swift` | ~196 | Unit tests for memory adapter, filtering, update round-trip, and delete. |
+| `leanring-buddyTests/MemoryReceiptTests.swift` | ~300 | Unit tests for receipt capture from session turns, backward-compatible decoding, store round-trips (auxiliary JSON + skill sidecar), and explanation prompt grounding. |
 | `leanring-buddyTests/ActivityStoreTests.swift` | ~175 | Unit tests for transition edge counting, pruning, suppression, and routine detection thresholds. |
 | `leanring-buddyTests/MemoryDedupEvalTests.swift` | ~220 | Offline dedup eval harness with labeled fixture pairs; regression guard for merge vs separate decisions. |
 | `tests/e2e/full-stack/` | — | Scaffold for full user-perspective E2E (BlackHole, PTT simulation, Peekaboo). |

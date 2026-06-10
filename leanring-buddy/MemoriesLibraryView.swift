@@ -55,6 +55,7 @@ struct MemoriesLibraryView: View {
         status: .active
     )
     @State private var memoryPendingDelete: Memory?
+    @State private var isHoveringAskClickyWhyButton = false
 
     private var filteredMemories: [Memory] {
         companionManager.memories(
@@ -118,6 +119,7 @@ struct MemoriesLibraryView: View {
             Button(action: {
                 if selectedMemory != nil {
                     cancelEditingIfNeeded()
+                    companionManager.clearMemoryReceiptExplanation()
                     selectedMemory = nil
                 } else {
                     onBack()
@@ -197,6 +199,7 @@ struct MemoriesLibraryView: View {
 
     private func memoryRow(_ memory: Memory) -> some View {
         Button(action: {
+            companionManager.clearMemoryReceiptExplanation()
             selectedMemory = memory
             isEditingSelectedMemory = false
         }) {
@@ -297,12 +300,134 @@ struct MemoriesLibraryView: View {
                 Spacer()
             }
 
+            memoryReceiptSection(memory)
+
             Divider()
                 .background(DS.Colors.borderSubtle)
 
             memoryMarkdownBody(memory.body)
         }
     }
+
+    // MARK: - Memory Receipt ("Why Clicky saved this")
+
+    private func memoryReceiptSection(_ memory: Memory) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Why Clicky saved this")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(DS.Colors.textTertiary)
+
+            if let latestReceipt = memory.latestReceipt {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let primaryGateReason = latestReceipt.primaryGateReason {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.seal")
+                                .font(.system(size: 10))
+                                .foregroundColor(DS.Colors.accent)
+                            Text(primaryGateReason.userFacingExplanation)
+                                .font(.system(size: 11))
+                                .foregroundColor(DS.Colors.textSecondary)
+                        }
+                    }
+
+                    Text(receiptContextLine(latestReceipt))
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+
+                    if let triggerPhrase = latestReceipt.triggerPhrase {
+                        Text("\u{201C}\(triggerPhrase)\u{201D}")
+                            .font(.system(size: 11))
+                            .italic()
+                            .foregroundColor(DS.Colors.textSecondary)
+                            .lineLimit(3)
+                    }
+                }
+            } else {
+                Text("Saved before Clicky started keeping receipts.")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+
+            askClickyWhyButton(memory)
+
+            receiptExplanationContent(memory)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                        .stroke(DS.Colors.borderSubtle.opacity(0.5), lineWidth: 0.8)
+                )
+        )
+    }
+
+    private func askClickyWhyButton(_ memory: Memory) -> some View {
+        let isGeneratingForThisMemory = companionManager.memoryReceiptExplanationState
+            == .generating(memoryID: memory.id)
+
+        return Button(action: {
+            companionManager.explainWhyMemoryWasSaved(memory)
+        }) {
+            HStack(spacing: 5) {
+                if isGeneratingForThisMemory {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "questionmark.bubble")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                Text(isGeneratingForThisMemory ? "Clicky is thinking…" : "Ask Clicky why")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundColor(DS.Colors.textOnAccent)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(DS.Colors.accent.opacity(isHoveringAskClickyWhyButton && !isGeneratingForThisMemory ? 0.85 : 1.0))
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .disabled(isGeneratingForThisMemory)
+        .onHover { isHovering in
+            isHoveringAskClickyWhyButton = isHovering
+        }
+        .accessibilityIdentifier("clicky.panel.memories-library.ask-why")
+    }
+
+    @ViewBuilder
+    private func receiptExplanationContent(_ memory: Memory) -> some View {
+        if case .presented(let memoryID, let explanationText) = companionManager.memoryReceiptExplanationState,
+           memoryID == memory.id {
+            Text(explanationText)
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func receiptContextLine(_ receipt: MemoryReceipt) -> String {
+        var contextParts = [Self.receiptSavedDateFormatter.string(from: receipt.savedAt)]
+        if let appDisplayName = TeachingSkill.displayName(forBundleId: receipt.appBundleId) {
+            contextParts.append(appDisplayName)
+        }
+        if receipt.updatedExistingMemory {
+            contextParts.append("updated an earlier save")
+        }
+        return contextParts.joined(separator: " · ")
+    }
+
+    private static let receiptSavedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 
     private func memoryEditForm(_ memory: Memory) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -403,6 +528,7 @@ struct MemoriesLibraryView: View {
         guard let memory = memoryPendingDelete else { return }
 
         if selectedMemory?.id == memory.id {
+            companionManager.clearMemoryReceiptExplanation()
             selectedMemory = nil
             isEditingSelectedMemory = false
         }

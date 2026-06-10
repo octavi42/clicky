@@ -19,6 +19,14 @@ struct Memory: Identifiable, Equatable, Codable {
     var isPinned: Bool
     var usageCount: Int
     var lastUsed: Date?
+    /// Evidence for why this memory was saved, oldest first. Appended on every
+    /// distill save, capped at `MemoryReceipt.maximumReceiptsPerMemory`.
+    var receipts: [MemoryReceipt]
+
+    /// The newest receipt — the one the UI and spoken explanation lead with.
+    var latestReceipt: MemoryReceipt? {
+        receipts.last
+    }
 
     init(
         id: String,
@@ -30,7 +38,8 @@ struct Memory: Identifiable, Equatable, Codable {
         status: TeachingSkillStatus = .active,
         isPinned: Bool = false,
         usageCount: Int = 0,
-        lastUsed: Date? = nil
+        lastUsed: Date? = nil,
+        receipts: [MemoryReceipt] = []
     ) {
         self.id = id
         self.category = category
@@ -42,6 +51,7 @@ struct Memory: Identifiable, Equatable, Codable {
         self.isPinned = isPinned
         self.usageCount = usageCount
         self.lastUsed = lastUsed
+        self.receipts = receipts
     }
 
     init(skill: TeachingSkill) {
@@ -55,6 +65,29 @@ struct Memory: Identifiable, Equatable, Codable {
         isPinned = skill.isPinned
         usageCount = skill.usageCount
         lastUsed = skill.lastUsed
+        receipts = skill.receipts
+    }
+
+    // Custom decoding so auxiliary-memories.json files written before receipts
+    // existed (no "receipts" key) still decode instead of failing the whole store.
+    enum CodingKeys: String, CodingKey {
+        case id, category, title, summary, body, bundleIds
+        case status, isPinned, usageCount, lastUsed, receipts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        category = try container.decode(MemoryCategory.self, forKey: .category)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decode(String.self, forKey: .summary)
+        body = try container.decode(String.self, forKey: .body)
+        bundleIds = try container.decode([String].self, forKey: .bundleIds)
+        status = try container.decode(TeachingSkillStatus.self, forKey: .status)
+        isPinned = try container.decode(Bool.self, forKey: .isPinned)
+        usageCount = try container.decode(Int.self, forKey: .usageCount)
+        lastUsed = try container.decodeIfPresent(Date.self, forKey: .lastUsed)
+        receipts = try container.decodeIfPresent([MemoryReceipt].self, forKey: .receipts) ?? []
     }
 
     static func filtered(
