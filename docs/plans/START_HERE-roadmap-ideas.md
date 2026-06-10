@@ -10,11 +10,13 @@ Data home: `/tmp/clicky-roadmap-ideas`
 |---|------|--------|-------------|
 | 1 | Memory Receipts | **Done** (merged 2026-06-10) | `feature/memory-receipts` → [PR #14](https://github.com/octavi42/clicky/pull/14) |
 | 2 | What Did You Learn About Me? | **Done** (implemented 2026-06-10) | `feature/what-did-you-learn` |
-| 3 | Memory Diff Timeline | **Done** (implemented 2026-06-10) — see [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) | `feature/memory-diff-timeline` |
-| 4 | Daily Brain Digest | Pending | `feature/daily-brain-digest` |
-| 5 | Memory Hygiene Coach | Pending | `feature/memory-hygiene-coach` |
-| 6 | Unique Stuff You Do | Pending | `feature/unique-behavior-insights` |
-| 7 | Native Tasks / Timer | Pending | `feature/context-tasks-timer` |
+| 3 | Memory Diff Timeline | **Done** (merged 2026-06-10) — see [START_HERE-memory-diff-timeline.md](./START_HERE-memory-diff-timeline.md) | `feature/memory-diff-timeline` → [PR #16](https://github.com/octavi42/clicky/pull/16) |
+| 4 | Daily Brain Digest | **Deferred** (presentation arc complete) | `feature/daily-brain-digest` |
+| 5 | Memory Hygiene Coach | **Deferred** | `feature/memory-hygiene-coach` |
+| 6 | Unique Stuff You Do | **Deferred** | `feature/unique-behavior-insights` |
+| 7 | Native Tasks / Timer | **Deferred** | `feature/context-tasks-timer` |
+
+**Presentation arc (tasks 1–3) is complete on `main`.** Demo script: [memory-diff-timeline-demo.md](./memory-diff-timeline-demo.md). Tasks 4–7 remain valid product ideas but are not needed for the current presentation.
 
 ## Mission
 
@@ -196,11 +198,11 @@ Avoid building a generic task manager or timer that is not differentiated.
 
 1. ~~Memory Receipts.~~ **Done**
 2. ~~What Did You Learn About Me?~~ **Done**
-3. ~~Memory Diff Timeline.~~ **Done**
-4. Daily Brain Digest. ← **start here**
-5. Memory Hygiene Coach.
-6. Unique Behavior Insights.
-7. Native Tasks or Timer, only if made context-aware.
+3. ~~Memory Diff Timeline.~~ **Done** — presentation-ready on `main`
+4. ~~Daily Brain Digest.~~ **Deferred**
+5. ~~Memory Hygiene Coach.~~ **Deferred**
+6. ~~Unique Behavior Insights.~~ **Deferred**
+7. ~~Native Tasks or Timer.~~ **Deferred** — only revisit if context-aware
 
 ## Strongest Demo Flow
 
@@ -212,6 +214,7 @@ Avoid building a generic task manager or timer that is not differentiated.
 6. Clicky shows the receipt: transcript, app, gate reason, and confirmation.
 7. User asks, "what did you learn about me?"
 8. Clicky summarizes active memories with confidence and source evidence.
+9. User opens Memories → a preference with multiple saves → **How this changed** shows Was → Now with receipt evidence. See [memory-diff-timeline-demo.md](./memory-diff-timeline-demo.md).
 
 ## Git Workflow
 
@@ -229,11 +232,11 @@ Prefer `--no-ff` merges (not squash) so every commit stays visible inside a merg
 |------|--------|--------|
 | Memory Receipts | `feature/memory-receipts` | Done (PR #14) |
 | What Did You Learn About Me? | `feature/what-did-you-learn` | Done (implemented 2026-06-10) |
-| Memory Diff Timeline | `feature/memory-diff-timeline` | Done (implemented 2026-06-10) |
-| Daily Brain Digest | `feature/daily-brain-digest` | Pending |
-| Memory Hygiene Coach | `feature/memory-hygiene-coach` | Pending |
-| Unique Stuff You Do | `feature/unique-behavior-insights` | Pending |
-| Native Tasks / Timer | `feature/context-tasks-timer` | Pending |
+| Memory Diff Timeline | `feature/memory-diff-timeline` | Done ([PR #16](https://github.com/octavi42/clicky/pull/16)) |
+| Daily Brain Digest | `feature/daily-brain-digest` | Deferred |
+| Memory Hygiene Coach | `feature/memory-hygiene-coach` | Deferred |
+| Unique Stuff You Do | `feature/unique-behavior-insights` | Deferred |
+| Native Tasks / Timer | `feature/context-tasks-timer` | Deferred |
 
 Cursor rule: `.cursor/rules/roadmap-ideas-git-workflow.mdc`
 
@@ -254,4 +257,5 @@ Cursor rule: `.cursor/rules/roadmap-ideas-git-workflow.mdc`
 - ~~What Did You Learn About Me? — voice query + Brain tab summary grounded in active local memories.~~ **Shipped** — see `SelfKnowledgeSummary.swift`, `CompanionManager.speakWhatClickyLearnedAboutMe`, Brain tab button in `CompanionPanelView`.
 - Features should build on existing stores and UI instead of inventing a parallel memory system.
 - ~~Memory Diff Timeline — show how a single memory changed over time, grounded in receipt evidence.~~ **Shipped** — see `MemoryDiffTimeline.swift`, receipt snapshots in `MemoryReceipt.swift`, and the "How this changed" section in `MemoriesLibraryView`.
-- **Next task:** Daily Brain Digest.
+- **Presentation arc complete** — tasks 1–3 shipped on `main`; rehearse with [memory-diff-timeline-demo.md](./memory-diff-timeline-demo.md).
+- **Deferred (post-presentation):** Daily Brain Digest, Memory Hygiene Coach, Unique Stuff You Do, Native Tasks/Timer — pick up only when there is a clear product reason.
