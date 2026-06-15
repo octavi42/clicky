@@ -37,8 +37,8 @@ enum FeatureDemoKind: Equatable {
     case nicheSuggestions
 }
 
-/// The four-stage memory loop shown in the comparison window pipeline
-/// strip and used to tag X-Ray peek panels.
+/// The four-stage memory loop used to tag X-Ray peek panels in the
+/// comparison conversation.
 enum DemoMemoryPipelineStage: Int, CaseIterable, Hashable, Identifiable {
     case persistedSession = 1
     case coldPathGate = 2
@@ -47,7 +47,7 @@ enum DemoMemoryPipelineStage: Int, CaseIterable, Hashable, Identifiable {
 
     var id: Int { rawValue }
 
-    var stripTitle: String {
+    var displayTitle: String {
         switch self {
         case .persistedSession: return "Session"
         case .coldPathGate: return "Gate"
@@ -200,9 +200,6 @@ final class SimulationDemoEngine: ObservableObject {
     /// Which demo currently owns the comparison window, e.g.
     /// "Skills · Ship It, Your Way". nil when no run has started.
     @Published private(set) var stageDemoTitle: String?
-    /// Stages that have completed so far in the current run — drives the
-    /// four-step pipeline strip above the comparison columns.
-    @Published private(set) var memoryPipelineLitStages: Set<DemoMemoryPipelineStage> = []
 
     // MARK: Proof Panel fields (shared by all demo cards)
 
@@ -1657,10 +1654,6 @@ final class SimulationDemoEngine: ObservableObject {
 
             appendBeat(beat, to: demoScriptStep.lane)
 
-            if case .xRayPeek(let pipelineStage, _, _) = beat {
-                noteMemoryPipelineStageReached(pipelineStage)
-            }
-
             await pause(nanoseconds: DemoScriptPacing.pacingAfterBeatNanoseconds)
             
             // Clear ghost after response lands
@@ -1728,11 +1721,6 @@ final class SimulationDemoEngine: ObservableObject {
         clickyTypingLane = nil
         comparisonRecapText = nil
         stageDemoTitle = nil
-        memoryPipelineLitStages = []
-    }
-
-    private func noteMemoryPipelineStageReached(_ pipelineStage: DemoMemoryPipelineStage) {
-        memoryPipelineLitStages.insert(pipelineStage)
     }
 
     private func clearProofPanel() {
