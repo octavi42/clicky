@@ -10,12 +10,12 @@
 //  in a meeting without depending on live speech recognition, network timing,
 //  or macOS permissions.
 //
-//  Current state: every section is wired to SimulationDemoEngine — the demo
-//  state strip, demo profile chips, reset, all four feature cards (Skills,
+//  Current state: every section is wired to SimulationDemoEngine — demo
+//  profile chips, reset, all four feature cards (Skills,
 //  Preferences, Routines, Niche Suggestions — scripted runs that play in the
 //  separate before/after comparison window), the Ask Clicky quick asks
 //  (spoken aloud by the real Clicky overlay from read-only store recall),
-//  and the proof panel.
+//  and an FAQ section for presenter talking points.
 //
 
 import SwiftUI
@@ -28,22 +28,16 @@ struct SimulationControlPanelView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Spacing.xxl) {
                 controlPanelHeader
-                demoStateStrip
                 featureDemoCardsSection
                 demoProfilesSection
                 askClickyQuickActionsSection
-                proofPanelSection
+                faqSection
             }
             .padding(DS.Spacing.xxxl)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(DS.Colors.background)
         .frame(minWidth: 860, minHeight: 600)
-        .onAppear {
-            // Counts can drift when memories are created outside the demo
-            // engine (e.g. a real voice session), so recompute on open.
-            simulationDemoEngine.refreshDemoStateCounts()
-        }
     }
 
     // MARK: - Header
@@ -62,82 +56,29 @@ struct SimulationControlPanelView: View {
 
             Spacer()
 
-            SimulationControlPanelChipButton(
-                title: "Reset",
-                iconSystemName: "arrow.counterclockwise",
-                action: {
-                    simulationDemoEngine.resetDemoStateToBaseline()
-                }
-            )
+            HStack(spacing: DS.Spacing.sm) {
+                SimulationControlPanelChipButton(
+                    title: "Ask",
+                    iconSystemName: "mic.fill",
+                    iconColor: DS.Colors.accentText,
+                    action: {
+                        Task {
+                            await companionManager.speakSimulationDemoAskResponse(
+                                spokenText: "What do you want to hear about this feature?"
+                            )
+                        }
+                    }
+                )
+
+                SimulationControlPanelChipButton(
+                    title: "Reset",
+                    iconSystemName: "arrow.counterclockwise",
+                    action: {
+                        simulationDemoEngine.resetDemoStateToBaseline()
+                    }
+                )
+            }
         }
-    }
-
-    // MARK: - Demo State
-
-    /// The six live demo-state readouts, rendered as one continuous strip so
-    /// they read as a single instrument row instead of six separate cards.
-    /// Values come straight from the engine's published state.
-    private var demoStateStrip: some View {
-        HStack(spacing: 0) {
-            demoStateColumn(
-                label: "Profile",
-                value: simulationDemoEngine.loadedDemoProfile?.displayName ?? "None"
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            demoStateColumnDivider
-
-            demoStateColumn(label: "Skills", value: String(simulationDemoEngine.demoSkillCount))
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            demoStateColumnDivider
-
-            demoStateColumn(label: "Preferences", value: String(simulationDemoEngine.demoPreferenceCount))
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            demoStateColumnDivider
-
-            demoStateColumn(label: "Routines", value: String(simulationDemoEngine.demoRoutineMemoryCount))
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            demoStateColumnDivider
-
-            demoStateColumn(
-                label: "Simulated app",
-                value: simulationDemoEngine.simulatedAppContextDisplayName ?? "—"
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            demoStateColumnDivider
-
-            // Hugs its natural width (the other columns share the rest) so
-            // longer engine strings like "Loaded Developer · 14:32:08"
-            // never truncate.
-            demoStateColumn(label: "Last run", value: simulationDemoEngine.lastRunStatusDescription)
-                .fixedSize()
-        }
-        .padding(.vertical, DS.Spacing.md)
-        .simulationCardSurface()
-    }
-
-    private func demoStateColumn(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.Colors.textTertiary)
-
-            Text(value)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, DS.Spacing.lg)
-    }
-
-    private var demoStateColumnDivider: some View {
-        Rectangle()
-            .fill(DS.Colors.borderSubtle.opacity(0.6))
-            .frame(width: 0.5, height: 26)
     }
 
     // MARK: - Feature Demo Cards
@@ -171,11 +112,8 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Skills Card (live)
 
-    /// The one fully wired feature card. Run opens the before/after
-    /// comparison window and plays the scripted learn-then-reuse Xcode
-    /// commit arc there, driving the real skill store, matcher, and prompt
-    /// builder; the card itself stays a compact dashboard whose proof
-    /// values stream in as the run advances.
+    /// Run opens the before/after comparison window and plays the scripted
+    /// learn-then-reuse Xcode commit arc there.
     private var skillsFeatureDemoCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -187,10 +125,6 @@ struct SimulationControlPanelView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .tracking(0.8)
                     .foregroundColor(DS.Colors.textTertiary)
-
-                Spacer()
-
-                demoRunStatusIndicator(for: simulationDemoEngine.skillsDemoRunState)
             }
 
             Text("Ship It, Your Way")
@@ -205,36 +139,10 @@ struct SimulationControlPanelView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
 
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.5))
-                .frame(height: 0.5)
-                .padding(.top, DS.Spacing.md)
-
-            VStack(spacing: 6) {
-                liveProofFieldRow(
-                    label: "Skill saved",
-                    value: simulationDemoEngine.skillsDemoSavedSkillNameProof
-                )
-                liveProofFieldRow(
-                    label: "Skill matched",
-                    value: simulationDemoEngine.skillsDemoSkillMatchedProof
-                )
-                liveProofFieldRow(
-                    label: "Prompt included teaching skills",
-                    value: simulationDemoEngine.skillsDemoPromptIncludedProof
-                )
-                liveProofFieldRow(
-                    label: "Turns to success",
-                    value: simulationDemoEngine.skillsDemoTurnsToSuccessProof
-                )
-            }
-            .padding(.top, DS.Spacing.md)
-
             Spacer(minLength: DS.Spacing.lg)
 
             HStack {
                 SimulationControlPanelRunButton(
-                    isRunning: simulationDemoEngine.skillsDemoRunState.isRunning,
                     action: {
                         // Surface the comparison window first, then start the
                         // run so the audience sees the conversation from its
@@ -257,11 +165,8 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Preferences Card (live)
 
-    /// Live Preferences card. Run opens the before/after comparison window
-    /// and plays the scripted "Stop Reading Code Aloud" arc there, driving
-    /// the real PreferenceSignalDetector, memory store, and prompt builder;
-    /// the card stays a compact dashboard whose proof values stream in as
-    /// the run advances.
+    /// Run opens the before/after comparison window and plays the scripted
+    /// "Stop Reading Code Aloud" arc there.
     private var preferencesFeatureDemoCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -273,10 +178,6 @@ struct SimulationControlPanelView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .tracking(0.8)
                     .foregroundColor(DS.Colors.textTertiary)
-
-                Spacer()
-
-                demoRunStatusIndicator(for: simulationDemoEngine.preferencesDemoRunState)
             }
 
             Text("Stop Reading Code Aloud")
@@ -291,36 +192,10 @@ struct SimulationControlPanelView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
 
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.5))
-                .frame(height: 0.5)
-                .padding(.top, DS.Spacing.md)
-
-            VStack(spacing: 6) {
-                liveProofFieldRow(
-                    label: "Preference signal detected",
-                    value: simulationDemoEngine.preferencesDemoSignalDetectedProof
-                )
-                liveProofFieldRow(
-                    label: "Preference saved",
-                    value: simulationDemoEngine.preferencesDemoSavedPreferenceTitleProof
-                )
-                liveProofFieldRow(
-                    label: "Prompt included preferences",
-                    value: simulationDemoEngine.preferencesDemoPromptIncludedProof
-                )
-                liveProofFieldRow(
-                    label: "Answer length",
-                    value: simulationDemoEngine.preferencesDemoAnswerLengthProof
-                )
-            }
-            .padding(.top, DS.Spacing.md)
-
             Spacer(minLength: DS.Spacing.lg)
 
             HStack {
                 SimulationControlPanelRunButton(
-                    isRunning: simulationDemoEngine.preferencesDemoRunState.isRunning,
                     action: {
                         // Surface the comparison window first, then start the
                         // run so the audience sees the conversation from its
@@ -343,11 +218,8 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Routines Card (live)
 
-    /// Live Routines card. Run opens the before/after comparison window and
-    /// plays the scripted "Linear → Xcode" arc there, driving the real
-    /// ActivityStore writes and RoutineDetector recurrence rules; the card
-    /// stays a compact dashboard whose proof values stream in as the run
-    /// advances.
+    /// Run opens the before/after comparison window and plays the scripted
+    /// "Linear → Xcode" arc there.
     private var routinesFeatureDemoCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -359,10 +231,6 @@ struct SimulationControlPanelView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .tracking(0.8)
                     .foregroundColor(DS.Colors.textTertiary)
-
-                Spacer()
-
-                demoRunStatusIndicator(for: simulationDemoEngine.routinesDemoRunState)
             }
 
             Text("Linear → Xcode")
@@ -377,36 +245,10 @@ struct SimulationControlPanelView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
 
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.5))
-                .frame(height: 0.5)
-                .padding(.top, DS.Spacing.md)
-
-            VStack(spacing: 6) {
-                liveProofFieldRow(
-                    label: "Activity edges seeded",
-                    value: simulationDemoEngine.routinesDemoEdgesSeededProof
-                )
-                liveProofFieldRow(
-                    label: "Routine chip shown",
-                    value: simulationDemoEngine.routinesDemoChipShownProof
-                )
-                liveProofFieldRow(
-                    label: "Chip label",
-                    value: simulationDemoEngine.routinesDemoChipLabelProof
-                )
-                liveProofFieldRow(
-                    label: "Answer style",
-                    value: simulationDemoEngine.routinesDemoAnswerStyleProof
-                )
-            }
-            .padding(.top, DS.Spacing.md)
-
             Spacer(minLength: DS.Spacing.lg)
 
             HStack {
                 SimulationControlPanelRunButton(
-                    isRunning: simulationDemoEngine.routinesDemoRunState.isRunning,
                     action: {
                         // Surface the comparison window first, then start the
                         // run so the audience sees the conversation from its
@@ -429,11 +271,8 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Niche Suggestions Card (live)
 
-    /// Live Niche Suggestions card. Run opens the before/after comparison
-    /// window and plays the scripted "Developer + Xcode" arc there, driving
-    /// the real niche override writes and the real suggestion-snapshot path;
-    /// the card stays a compact dashboard whose proof values stream in as
-    /// the run advances.
+    /// Run opens the before/after comparison window and plays the scripted
+    /// "Developer + Xcode" arc there.
     private var nicheSuggestionsFeatureDemoCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -445,10 +284,6 @@ struct SimulationControlPanelView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .tracking(0.8)
                     .foregroundColor(DS.Colors.textTertiary)
-
-                Spacer()
-
-                demoRunStatusIndicator(for: simulationDemoEngine.nicheSuggestionsDemoRunState)
             }
 
             Text("Developer + Xcode")
@@ -463,36 +298,10 @@ struct SimulationControlPanelView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
 
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.5))
-                .frame(height: 0.5)
-                .padding(.top, DS.Spacing.md)
-
-            VStack(spacing: 6) {
-                liveProofFieldRow(
-                    label: "Niche picked",
-                    value: simulationDemoEngine.nicheSuggestionsDemoNichePickedProof
-                )
-                liveProofFieldRow(
-                    label: "Simulated frontmost app",
-                    value: simulationDemoEngine.nicheSuggestionsDemoSimulatedFrontmostAppProof
-                )
-                liveProofFieldRow(
-                    label: "Suggestion mode",
-                    value: simulationDemoEngine.nicheSuggestionsDemoSuggestionModeProof
-                )
-                liveProofFieldRow(
-                    label: "App-aware suggestions shown",
-                    value: simulationDemoEngine.nicheSuggestionsDemoSuggestionsShownProof
-                )
-            }
-            .padding(.top, DS.Spacing.md)
-
             Spacer(minLength: DS.Spacing.lg)
 
             HStack {
                 SimulationControlPanelRunButton(
-                    isRunning: simulationDemoEngine.nicheSuggestionsDemoRunState.isRunning,
                     action: {
                         // Surface the comparison window first, then start the
                         // run so the audience sees the conversation from its
@@ -511,37 +320,6 @@ struct SimulationControlPanelView: View {
         .padding(DS.Spacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
         .simulationCardSurface()
-    }
-
-    /// Status pill for a live feature card, mapping its engine run state to
-    /// the shared indicator styles.
-    @ViewBuilder
-    private func demoRunStatusIndicator(for featureDemoRunState: FeatureDemoRunState) -> some View {
-        switch featureDemoRunState {
-        case .notRun:
-            statusIndicator(text: "Not run")
-        case .running:
-            statusIndicator(text: "Running…", dotColor: DS.Colors.warning)
-        case .finished(let atTimeDescription):
-            statusIndicator(text: "Ran · \(atTimeDescription)", dotColor: DS.Colors.success)
-        }
-    }
-
-    /// Proof readout row whose value streams in from the engine.
-    /// nil renders as a quiet em dash until the run proves the field.
-    private func liveProofFieldRow(label: String, value: String?) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-
-            Spacer(minLength: DS.Spacing.md)
-
-            Text(value ?? "—")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(value == nil ? DS.Colors.textSecondary : DS.Colors.success)
-                .multilineTextAlignment(.trailing)
-        }
     }
 
     // MARK: - Demo Profiles
@@ -602,61 +380,30 @@ struct SimulationControlPanelView: View {
         }
     }
 
-    // MARK: - Proof Panel
+    // MARK: - FAQ
 
-    /// Live evidence readouts shared by every demo card. The engine updates
-    /// these as runs complete; reset returns them to em dashes.
-    private var proofPanelSection: some View {
+    private var faqSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.sm) {
-            sectionTitle("PROOF PANEL")
+            sectionTitle("FAQ")
 
             VStack(alignment: .leading, spacing: 0) {
-                proofPanelRow(
-                    label: "Last memory written",
-                    value: simulationDemoEngine.lastMemoryWrittenDescription
-                )
-                proofPanelRowDivider
-                proofPanelRow(
-                    label: "Last matched memory",
-                    value: simulationDemoEngine.lastMatchedMemoryDescription
-                )
-                proofPanelRowDivider
-                proofPanelRow(
-                    label: "Prompt sections included",
-                    value: simulationDemoEngine.promptSectionsIncludedDescription
-                )
-                proofPanelRowDivider
-                proofPanelRow(
-                    label: "Before / after metrics",
-                    value: simulationDemoEngine.beforeAfterMetricDescription
-                )
+                ForEach(Array(simulationControlPanelFAQItems.enumerated()), id: \.element.id) { index, faqItem in
+                    if index > 0 {
+                        faqRowDivider
+                    }
+
+                    SimulationControlPanelFAQRow(faqItem: faqItem)
+                }
             }
             .simulationCardSurface()
         }
     }
 
-    private var proofPanelRowDivider: some View {
+    private var faqRowDivider: some View {
         Rectangle()
             .fill(DS.Colors.borderSubtle.opacity(0.6))
             .frame(height: 0.5)
             .padding(.horizontal, DS.Spacing.lg)
-    }
-
-    private func proofPanelRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.Colors.textSecondary)
-
-            Spacer()
-
-            Text(value)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(value == "—" ? DS.Colors.textTertiary : DS.Colors.textPrimary)
-                .multilineTextAlignment(.trailing)
-        }
-        .padding(.horizontal, DS.Spacing.lg)
-        .padding(.vertical, 11)
     }
 
     // MARK: - Shared Helpers
@@ -667,19 +414,99 @@ struct SimulationControlPanelView: View {
             .tracking(0.8)
             .foregroundColor(DS.Colors.textTertiary)
     }
+}
 
-    /// Dot + label status readout. The dot stays a quiet tertiary gray while
-    /// idle and carries run state (amber running, green ran) on live cards.
-    private func statusIndicator(text: String, dotColor: Color = DS.Colors.textTertiary.opacity(0.7)) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 5, height: 5)
+// MARK: - FAQ
 
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(DS.Colors.textTertiary)
+private struct SimulationControlPanelFAQItem: Identifiable {
+    let id: String
+    let question: String
+    let answer: String
+}
+
+private let simulationControlPanelFAQItems: [SimulationControlPanelFAQItem] = [
+    SimulationControlPanelFAQItem(
+        id: "what-is-this",
+        question: "What is this demo?",
+        answer: "A presenter-only cockpit for showing how Clicky becomes a local learning companion. Runs are scripted and deterministic — no live speech, network timing, or macOS permissions required."
+    ),
+    SimulationControlPanelFAQItem(
+        id: "skills",
+        question: "What do Skills prove?",
+        answer: "Clicky can learn a screen workflow you teach once — house rules no stateless assistant would guess — and reuse it the next time you ask."
+    ),
+    SimulationControlPanelFAQItem(
+        id: "preferences",
+        question: "What do Preferences prove?",
+        answer: "Clicky can learn how you want answers — including things to stop doing — and apply that style on the next turn."
+    ),
+    SimulationControlPanelFAQItem(
+        id: "routines",
+        question: "What do Routines prove?",
+        answer: "Clicky notices repeated app transitions in the background and surfaces a lightweight chip when a familiar workflow starts again."
+    ),
+    SimulationControlPanelFAQItem(
+        id: "niche-suggestions",
+        question: "What do Niche Suggestions prove?",
+        answer: "Before Clicky has learned much about you, it helps you know what to ask — with app-aware prompts matched to your niche."
+    ),
+    SimulationControlPanelFAQItem(
+        id: "profiles",
+        question: "What do demo profiles do?",
+        answer: "Load a work style — Developer, Creator, Designer, or Student — to pre-seed skills, preferences, routines, and niche so Ask Clicky answers from a realistic learned state."
+    ),
+    SimulationControlPanelFAQItem(
+        id: "reset",
+        question: "What does Reset do?",
+        answer: "Wipes all demo-learned state back to a blank Clicky: skills, preferences, routines, activity edges, and the loaded profile. Safe to run any time."
+    ),
+]
+
+private struct SimulationControlPanelFAQRow: View {
+    let faqItem: SimulationControlPanelFAQItem
+
+    @State private var isExpanded = false
+
+    private let expandCollapseAnimation = Animation.easeOut(duration: DS.Animation.fast)
+
+    var body: some View {
+        Button {
+            withAnimation(expandCollapseAnimation) {
+                isExpanded.toggle()
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.sm) {
+                    Text(faqItem.question)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .multilineTextAlignment(.leading)
+
+                    Spacer(minLength: DS.Spacing.md)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+
+                Text(faqItem.answer)
+                    .font(.system(size: 11))
+                    .lineSpacing(3)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, isExpanded ? 8 : 0)
+                    .frame(maxHeight: isExpanded ? nil : 0, alignment: .top)
+                    .opacity(isExpanded ? 1 : 0)
+                    .clipped()
+            }
+            .padding(.horizontal, DS.Spacing.lg)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 }
 
@@ -707,10 +534,7 @@ extension View {
 // MARK: - Buttons
 
 /// Small accent capsule used as the single strong call-to-action per card.
-/// While its demo is running it goes quiet and ignores clicks so a paced
-/// run can't be restarted mid-flight.
 private struct SimulationControlPanelRunButton: View {
-    var isRunning: Bool = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -718,40 +542,27 @@ private struct SimulationControlPanelRunButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if isRunning {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 8, weight: .semibold))
-                }
+                Image(systemName: "play.fill")
+                    .font(.system(size: 8, weight: .semibold))
 
-                Text(isRunning ? "Running…" : "Run")
+                Text("Run")
                     .font(.system(size: 11, weight: .semibold))
             }
-            .foregroundColor(isRunning ? DS.Colors.textTertiary : DS.Colors.textOnAccent)
+            .foregroundColor(DS.Colors.textOnAccent)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
             .background(
                 Capsule(style: .continuous)
-                    .fill(runButtonBackgroundColor)
+                    .fill(isHovered ? DS.Colors.accentHover : DS.Colors.accent)
             )
         }
         .buttonStyle(.plain)
-        .disabled(isRunning)
-        .pointerCursor(isEnabled: !isRunning)
+        .pointerCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: DS.Animation.fast)) {
                 isHovered = hovering
             }
         }
-    }
-
-    private var runButtonBackgroundColor: Color {
-        if isRunning {
-            return DS.Colors.surface3
-        }
-        return isHovered ? DS.Colors.accentHover : DS.Colors.accent
     }
 }
 
