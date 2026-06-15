@@ -18,6 +18,12 @@ enum MemoryDedupConfiguration {
     static let sameAxisParaphraseLexicalFloor: Double = 0.30
     static let sameAxisParaphraseAppleThreshold: Double = 0.80
 
+    /// Pass 1 recall floors — candidates below these are excluded unless same-axis or exact id.
+    static let candidateRecallLexicalFloor: Double = 0.12
+    static let candidateRecallAppleFloor: Double = 0.72
+    static let candidateRecallAppleLexicalFloor: Double = 0.10
+    static let candidateRecallHybridFloor: Double = 0.18
+
     static var mergeThreshold: Double {
         lexicalMergeThreshold
     }
@@ -89,10 +95,56 @@ enum AuxiliaryMemoryMatcher {
             orderedCandidates.append(exactMatch)
         }
         for memory in rankedByScore where !orderedCandidates.contains(where: { $0.id == memory.id }) {
+            guard passesCandidateRecallFloor(
+                newTopic: trimmedTopic,
+                existingMemory: memory,
+                expectedMemoryId: expectedMemoryId,
+                using: scorer
+            ) else {
+                continue
+            }
             orderedCandidates.append(memory)
         }
 
         return Array(orderedCandidates.prefix(limit))
+    }
+
+    /// Whether an existing memory is plausible enough to send to the LLM reconcile judge.
+    @MainActor
+    static func passesCandidateRecallFloor(
+        newTopic: String,
+        existingMemory: Memory,
+        expectedMemoryId: String? = nil,
+        using scorer: any MemorySimilarityScorer
+    ) -> Bool {
+        if let expectedMemoryId, existingMemory.id == expectedMemoryId {
+            return true
+        }
+
+        let existingText = memoryComparisonText(for: existingMemory)
+
+        if PreferenceSameAxisMatcher.isSameBehavioralAxis(between: newTopic, and: existingText) {
+            return true
+        }
+
+        if let hybridScorer = scorer as? HybridMemorySimilarityScorer {
+            let lexicalScore = hybridScorer.lexicalSimilarity(between: newTopic, and: existingText)
+            let appleScore = hybridScorer.appleSimilarity(between: newTopic, and: existingText)
+            if lexicalScore >= MemoryDedupConfiguration.candidateRecallLexicalFloor {
+                return true
+            }
+            if appleScore >= MemoryDedupConfiguration.candidateRecallAppleFloor &&
+                lexicalScore >= MemoryDedupConfiguration.candidateRecallAppleLexicalFloor {
+                return true
+            }
+            if max(lexicalScore, appleScore) >= MemoryDedupConfiguration.candidateRecallHybridFloor {
+                return true
+            }
+            return false
+        }
+
+        return scorer.similarity(between: newTopic, and: existingText) >=
+            MemoryDedupConfiguration.candidateRecallHybridFloor
     }
 
     @MainActor

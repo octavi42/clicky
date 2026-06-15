@@ -1,0 +1,96 @@
+{
+  "pairs": [
+    {
+      "id": "paraphrase-one-sentence-answers",
+      "newTopic": "from now on keep the answers in one sentence",
+      "existingMemoryId": "pref-keep-answers-short",
+      "existingMemory": {
+        "title": "keep answers short",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "simulatedLLMDecision": "update pref-keep-answers-short",
+      "expectedPipelineDecision": "update"
+    },
+    {
+      "id": "paraphrase-give-detailed-answers-reversal",
+      "newTopic": "give detailed answers with examples",
+      "existingMemoryId": "pref-keep-answers-short",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "simulatedLLMDecision": "update pref-keep-answers-short",
+      "expectedPipelineDecision": "update"
+    },
+    {
+      "id": "related-but-distinct-tone",
+      "newTopic": "be friendly and casual in tone",
+      "existingMemoryId": "pref-keep-answers-short",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "simulatedLLMDecision": "update pref-keep-answers-short",
+      "expectedPipelineDecision": "create"
+    },
+    {
+      "id": "unrelated-export-vs-answers",
+      "newTopic": "export video to youtube weekly",
+      "existingMemoryId": "pref-keep-answers-short",
+      "existingMemory": {
+        "title": "short answers",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "simulatedLLMDecision": "update pref-keep-answers-short",
+      "expectedPipelineDecision": "create"
+    },
+    {
+      "id": "paraphrase-keyboard-shortcuts",
+      "newTopic": "prefer keyboard shortcuts over clicking menus",
+      "existingMemoryId": "pref-keyboard-first",
+      "existingMemory": {
+        "title": "keyboard first",
+        "summary": "use keyboard shortcuts instead of menus",
+        "body": "always suggest keyboard shortcuts before pointing at menu items"
+      },
+      "bundleId": null,
+      "simulatedLLMDecision": "update pref-keyboard-first",
+      "expectedPipelineDecision": "update"
+    },
+    {
+      "id": "scope-different-apps-typescript",
+      "newTopic": "prefer typescript in xcode",
+      "existingMemoryId": "pref-typescript-first",
+      "existingMemory": {
+        "title": "typescript first",
+        "summary": "prefer typescript examples over javascript",
+        "body": "default to typescript syntax in code examples"
+      },
+      "existingBundleId": "com.microsoft.VSCode",
+      "targetBundleId": "com.apple.dt.Xcode",
+      "simulatedLLMDecision": "update pref-typescript-first",
+      "expectedPipelineDecision": "create"
+    },
+    {
+      "id": "invalid-update-id",
+      "newTopic": "keep answers short",
+      "existingMemoryId": "pref-keep-answers-short",
+      "existingMemory": {
+        "title": "keep answers short",
+        "summary": "keep answers brief and concise",
+        "body": "answer in one or two sentences whenever possible"
+      },
+      "bundleId": null,
+      "simulatedLLMDecision": "update pref-does-not-exist",
+      "expectedPipelineDecision": "create"
+    }
+  ]
+}

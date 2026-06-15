@@ -102,6 +102,29 @@ enum ClickyE2EConfiguration {
         clickyDirectoryURL.appendingPathComponent("e2e-niche-discovery.json")
     }
 
+    static var preferenceDedupPlanFileURL: URL {
+        clickyDirectoryURL.appendingPathComponent("e2e-preference-dedup-plan.json")
+    }
+
+    static var preferenceDedupOutcomeFileURL: URL {
+        clickyDirectoryURL.appendingPathComponent("e2e-preference-dedup-outcome.json")
+    }
+
+    struct PreferenceDedupE2ESnapshot: Codable {
+        let preferenceMatchText: String
+        let targetBundleId: String?
+        let planReason: String
+        let skipsReconcileLLM: Bool
+        let candidateMemoryIDs: [String]
+    }
+
+    struct PreferenceDedupOutcomeE2ESnapshot: Codable {
+        let savedMemoryID: String
+        let updatedExisting: Bool
+        let validatorForcedCreate: Bool
+        let overrideReason: String?
+    }
+
     struct NicheDiscoveryE2ESnapshot: Codable {
         let selectedNiche: String
         let suggestionCount: Int
@@ -184,6 +207,24 @@ enum ClickyE2EConfiguration {
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         guard let data = try? encoder.encode(snapshot) else { return }
         writeData(data, to: nicheDiscoveryFileURL)
+    }
+
+    static func writePreferenceDedupPlanForE2E(_ snapshot: PreferenceDedupE2ESnapshot) {
+        guard isEnabled else { return }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+        guard let data = try? encoder.encode(snapshot) else { return }
+        writeData(data, to: preferenceDedupPlanFileURL)
+    }
+
+    static func writePreferenceDedupOutcomeForE2E(_ snapshot: PreferenceDedupOutcomeE2ESnapshot) {
+        guard isEnabled else { return }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+        guard let data = try? encoder.encode(snapshot) else { return }
+        writeData(data, to: preferenceDedupOutcomeFileURL)
     }
 
     static func writeSuggestionsForE2E(_ suggestionPrompts: [String]) {

@@ -13,6 +13,7 @@ enum PreferenceSynthesizer {
     struct SynthesisResult {
         let memory: Memory
         let updatedExistingMemory: Bool
+        let dedupValidation: PreferenceDedupValidationResult?
     }
 
     private static let synthesisSystemPrompt = """
@@ -39,10 +40,16 @@ enum PreferenceSynthesizer {
     you are given a new preference the user just stated and a list of existing candidate preferences. do two things:
 
     1. decide whether the new preference is on the SAME behavioral axis as one of the candidates, or covers a different aspect of behavior.
-       - "axis" means the same dimension of behavior: answer length (short / one sentence / detailed), tone (formal / casual), code style, confirmation behavior, units, etc.
+       - "axis" means the same dimension of behavior: answer length (short / one sentence / detailed), tone (formal / casual), code style, confirmation behavior, units, keyboard vs menus, etc.
        - if the new preference is on the same axis as a candidate, update that candidate — even if the new value reverses the old one. the user is revising their preference, and the latest statement wins (last-write-wins). example: an existing "keep answers short" candidate should be updated by "give detailed answers" to now describe detailed answers, so the user never has two contradictory preferences.
-       - create new only when the preference covers a different aspect of behavior than every candidate (e.g. "use keyboard shortcuts" vs an answer-length candidate).
+       - create new only when the preference covers a different aspect of behavior than every candidate (e.g. "use keyboard shortcuts" vs an answer-length candidate; "be friendly in tone" vs a short-answers candidate).
        - when unsure whether two preferences share an axis, create new.
+
+    examples:
+    - update: new "from now on keep the answers in one sentence" + candidate "keep answers short" → same answer-length axis
+    - update: new "give detailed answers with examples" + candidate "keep answers short" → same answer-length axis (reversal; latest wins)
+    - create: new "prefer keyboard shortcuts" + candidate "keep answers short" → different axes
+    - create: new "be friendly and casual in tone" + candidate "keep answers short" → different axes
 
     2. produce the memory text describing the user's CURRENT (latest) intent.
 
@@ -57,10 +64,52 @@ enum PreferenceSynthesizer {
     keep it concise, practical, and durable. all lowercase.
     """
 
+    /// Builds a memory from a parsed reconcile/create response — used by synthesis
+    /// and by offline pipeline tests without calling Claude.
+    static func buildMemoryFromParsedResponse(
+        title: String,
+        summary: String,
+        body: String,
+        fallbackResponseText: String,
+        candidateMemories: [Memory],
+        topic: String,
+        resolvedBundleId: String?,
+        bundleIds: [String],
+        validationResult: PreferenceDedupValidationResult
+    ) -> (memory: Memory, updatedExistingMemory: Bool) {
+        let stableMemoryId = AuxiliaryMemoryMatcher.stableMemoryId(
+            category: .preference,
+            topic: topic,
+            bundleId: resolvedBundleId
+        )
+
+        let existingMemory = validationResult.validatedUpdateMemoryId.flatMap { updateId in
+            candidateMemories.first { $0.id == updateId }
+        } ?? candidateMemories.first { $0.id == stableMemoryId }
+
+        let memoryId = existingMemory?.id ?? stableMemoryId
+
+        let memory = Memory(
+            id: memoryId,
+            category: .preference,
+            title: title.isEmpty ? (existingMemory?.title ?? "User preference") : title,
+            summary: summary.isEmpty ? (existingMemory?.summary ?? "") : summary,
+            body: body.isEmpty ? (existingMemory?.body ?? fallbackResponseText) : body,
+            bundleIds: bundleIds.isEmpty ? (existingMemory?.bundleIds ?? []) : bundleIds,
+            status: .active,
+            isPinned: existingMemory?.isPinned ?? false,
+            usageCount: existingMemory?.usageCount ?? 0,
+            lastUsed: Date(),
+            receipts: existingMemory?.receipts ?? []
+        )
+
+        return (memory: memory, updatedExistingMemory: existingMemory != nil)
+    }
+
     static func synthesizePreference(
         sessionTrace: [SessionTraceEntry],
         gateReasons: [GateReason],
-        candidateMemories: [Memory],
+        dedupPlan: PreferenceDedupPlan,
         targetBundleId: String?,
         dedupTopic: String,
         claudeAPI: ClaudeAPI
@@ -75,6 +124,7 @@ enum PreferenceSynthesizer {
         let isAppSpecific = PreferenceSignalDetector.isClearlyAppSpecificPreference(in: sessionTrace)
         let resolvedBundleId = isAppSpecific ? targetBundleId : nil
         let bundleIds = resolvedBundleId.map { [$0] } ?? []
+        let candidateMemories = dedupPlan.candidateMemories
 
         let sessionSummary = renderSessionSummary(
             sessionTrace,
@@ -107,47 +157,45 @@ enum PreferenceSynthesizer {
 
         let parsed = parseStructuredResponse(from: response.text)
 
-        let stableMemoryId = AuxiliaryMemoryMatcher.stableMemoryId(
-            category: .preference,
+        let validationResult = PreferenceDedupValidator.validateParsedDecision(
+            parsedUpdateMemoryId: parsed.updateMemoryId,
+            candidateMemories: candidateMemories,
+            newTopic: topic,
+            stableMemoryId: AuxiliaryMemoryMatcher.stableMemoryId(
+                category: .preference,
+                topic: topic,
+                bundleId: resolvedBundleId
+            ),
+            targetBundleId: resolvedBundleId
+        )
+
+        let builtMemory = buildMemoryFromParsedResponse(
+            title: parsed.title,
+            summary: parsed.summary,
+            body: parsed.body,
+            fallbackResponseText: response.text,
+            candidateMemories: candidateMemories,
             topic: topic,
-            bundleId: resolvedBundleId
+            resolvedBundleId: resolvedBundleId,
+            bundleIds: bundleIds,
+            validationResult: validationResult
         )
 
-        // Prefer the candidate the LLM chose to update; otherwise fall back to a
-        // candidate whose id equals the computed stable id. The fallback guards the
-        // "create" path against an id collision: `save` upserts by id, so writing a
-        // fresh Memory over an existing id would wipe its usageCount / isPinned /
-        // bundleIds. `mergeCandidates` always surfaces an exact stable-id match, so
-        // a colliding memory in scope is present here to copy metadata from.
-        let existingMemory = parsed.updateMemoryId.flatMap { updateId in
-            candidateMemories.first { $0.id == updateId }
-        } ?? candidateMemories.first { $0.id == stableMemoryId }
-
-        let memoryId = existingMemory?.id ?? stableMemoryId
-
-        let memory = Memory(
-            id: memoryId,
-            category: .preference,
-            title: parsed.title.isEmpty ? (existingMemory?.title ?? "User preference") : parsed.title,
-            summary: parsed.summary.isEmpty ? (existingMemory?.summary ?? "") : parsed.summary,
-            body: parsed.body.isEmpty ? (existingMemory?.body ?? response.text) : parsed.body,
-            // Scope changes only on an explicit app signal. If this restatement
-            // names an app, use that scope; otherwise keep the existing memory's
-            // scope rather than silently broadening an app-scoped preference to
-            // global. An app-agnostic phrasing is not an "apply everywhere" command,
-            // and leaking a scoped preference (e.g. "in Xcode use tabs") into every
-            // app is the worse failure than under-applying it.
-            bundleIds: bundleIds.isEmpty ? (existingMemory?.bundleIds ?? []) : bundleIds,
-            status: .active,
-            isPinned: existingMemory?.isPinned ?? false,
-            usageCount: existingMemory?.usageCount ?? 0,
-            lastUsed: Date(),
-            // Preserve the audit trail across last-write-wins updates: the
-            // caller appends this save's new receipt after synthesis.
-            receipts: existingMemory?.receipts ?? []
+        return SynthesisResult(
+            memory: builtMemory.memory,
+            updatedExistingMemory: builtMemory.updatedExistingMemory,
+            dedupValidation: validationResult
         )
+    }
 
-        return SynthesisResult(memory: memory, updatedExistingMemory: existingMemory != nil)
+    /// Parses the `decision:` value. Returns the candidate id to update, or nil for "create".
+    static func parseUpdateMemoryId(from decisionValue: String) -> String? {
+        let normalizedDecision = decisionValue.lowercased()
+        guard normalizedDecision.hasPrefix("update") else { return nil }
+
+        let remainder = String(decisionValue.dropFirst("update".count))
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \t<>"))
+        return remainder.isEmpty ? nil : remainder
     }
 
     private static func renderCandidates(_ candidates: [Memory]) -> String {
@@ -197,16 +245,6 @@ enum PreferenceSynthesizer {
         }
 
         return (updateMemoryId: updateMemoryId, title: title, summary: summary, body: bodyLines.joined(separator: "\n"))
-    }
-
-    /// Parses the `decision:` value. Returns the candidate id to update, or nil for "create".
-    private static func parseUpdateMemoryId(from decisionValue: String) -> String? {
-        let normalizedDecision = decisionValue.lowercased()
-        guard normalizedDecision.hasPrefix("update") else { return nil }
-
-        let remainder = String(decisionValue.dropFirst("update".count))
-            .trimmingCharacters(in: CharacterSet(charactersIn: " \t<>"))
-        return remainder.isEmpty ? nil : remainder
     }
 
     private static func renderSessionSummary(

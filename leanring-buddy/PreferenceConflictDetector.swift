@@ -7,32 +7,6 @@
 
 import Foundation
 
-enum PreferenceSameAxisMatcher {
-    private static let answerFocusTokens: Set<String> = ["answer", "answers", "response", "responses"]
-    private static let brevityTokens: Set<String> = ["short", "brief", "concise", "sentence", "sentences", "one"]
-    private static let verbosityTokens: Set<String> = ["detailed", "verbose", "expand", "thorough", "examples"]
-
-    /// True when both texts express answer-length brevity on the same side of the axis.
-    static func isSameAnswerLengthPreferenceAxis(between textA: String, and textB: String) -> Bool {
-        let tokensA = Set(SkillMatcher.meaningfulTokens(textA))
-        let tokensB = Set(SkillMatcher.meaningfulTokens(textB))
-
-        guard !tokensA.intersection(answerFocusTokens).isEmpty,
-              !tokensB.intersection(answerFocusTokens).isEmpty else {
-            return false
-        }
-
-        guard !tokensA.intersection(brevityTokens).isEmpty,
-              !tokensB.intersection(brevityTokens).isEmpty else {
-            return false
-        }
-
-        let textAVerbosity = !tokensA.intersection(verbosityTokens).isEmpty
-        let textBVerbosity = !tokensB.intersection(verbosityTokens).isEmpty
-        return textAVerbosity == textBVerbosity
-    }
-}
-
 enum PreferenceConflictDetector {
     /// Each inner array is a pair of opposing subgroups on the same preference axis.
     /// Two texts conflict only when they hit different subgroups, not when one is a

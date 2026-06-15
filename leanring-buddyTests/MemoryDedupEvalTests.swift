@@ -276,6 +276,27 @@ struct MemoryDedupEvalTests {
     /// even when the precision-first threshold path (`decideDedup`) would reject it.
     /// This is the real-world bug: a short utterance vs an expanded synthesized memory
     /// scores too low for any fixed threshold, so the LLM judge needs it as a candidate.
+    @Test @MainActor func mergeCandidatesExcludesUnrelatedPreferences() {
+        let existingShortAnswers = Memory(
+            id: "pref-keep-answers-short",
+            category: .preference,
+            title: "short answers",
+            summary: "keep answers brief and concise",
+            body: "answer in one or two sentences whenever possible",
+            bundleIds: [],
+            status: .active
+        )
+
+        let candidates = AuxiliaryMemoryMatcher.mergeCandidates(
+            in: [existingShortAnswers],
+            category: .preference,
+            topic: "export video to youtube weekly",
+            bundleId: nil
+        )
+
+        #expect(candidates.isEmpty)
+    }
+
     @Test @MainActor func mergeCandidatesSurfaceLexicallyDistantParaphrase() {
         let existingShortAnswers = Memory(
             id: "pref-keep-answers-short",

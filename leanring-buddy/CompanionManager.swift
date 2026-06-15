@@ -1130,23 +1130,43 @@ final class CompanionManager: ObservableObject {
             _ = await previousPreferenceWriteTask?.value
             guard !Task.isCancelled else { return }
             do {
-                let candidateMemories = AuxiliaryMemoryMatcher.mergeCandidates(
-                    in: auxiliaryMemoryStore.memories,
-                    category: .preference,
-                    topic: preferenceMatchText,
+                let dedupPlan = PreferenceDedupPlanner.planPreferenceDedup(
+                    existingMemories: auxiliaryMemoryStore.memories,
+                    newTopic: preferenceMatchText,
                     bundleId: targetBundleId
+                )
+
+                writePreferenceDedupArtifactsForE2E(
+                    dedupPlan: dedupPlan,
+                    preferenceMatchText: preferenceMatchText,
+                    targetBundleId: targetBundleId
                 )
 
                 let synthesisResult = try await PreferenceSynthesizer.synthesizePreference(
                     sessionTrace: turns,
                     gateReasons: gateReasons,
-                    candidateMemories: candidateMemories,
+                    dedupPlan: dedupPlan,
                     targetBundleId: targetBundleId,
                     dedupTopic: preferenceMatchText,
                     claudeAPI: claudeAPI
                 )
 
                 guard !Task.isCancelled else { return }
+
+                if let dedupValidation = synthesisResult.dedupValidation {
+                    ClickyAnalytics.trackPreferenceDedupOutcome(
+                        planReason: dedupPlanReasonLabel(for: dedupPlan),
+                        candidateCount: dedupPlan.candidateMemories.count,
+                        updatedExisting: synthesisResult.updatedExistingMemory,
+                        validatorForcedCreate: dedupValidation.forcedCreate,
+                        overrideReason: dedupValidation.overrideReason?.rawValue
+                    )
+                    writePreferenceDedupValidationForE2E(
+                        dedupValidation,
+                        savedMemoryID: synthesisResult.memory.id,
+                        updatedExisting: synthesisResult.updatedExistingMemory
+                    )
+                }
 
                 var memory = synthesisResult.memory
                 let saveReceipt = MemoryReceipt.capture(
@@ -1707,6 +1727,48 @@ final class CompanionManager: ObservableObject {
         ClickyE2EConfiguration.writeSuggestionsForE2E(nicheSuggestions.map(\.prompt))
         ClickyE2EConfiguration.writeSkillsCountForE2E(teachingSkillStore.skills.count)
         ClickyE2EConfiguration.writeSkillLibraryStateForE2E(teachingSkillStore.skills)
+    }
+
+    private func dedupPlanReasonLabel(for dedupPlan: PreferenceDedupPlan) -> String {
+        switch dedupPlan {
+        case .createNew(let reason):
+            return reason.rawValue
+        case .reconcile(_, let reason):
+            return reason.rawValue
+        }
+    }
+
+    private func writePreferenceDedupArtifactsForE2E(
+        dedupPlan: PreferenceDedupPlan,
+        preferenceMatchText: String,
+        targetBundleId: String?
+    ) {
+        guard ClickyE2EConfiguration.isEnabled else { return }
+
+        let snapshot = ClickyE2EConfiguration.PreferenceDedupE2ESnapshot(
+            preferenceMatchText: preferenceMatchText,
+            targetBundleId: targetBundleId,
+            planReason: dedupPlanReasonLabel(for: dedupPlan),
+            skipsReconcileLLM: dedupPlan.skipsReconcileLLM,
+            candidateMemoryIDs: dedupPlan.candidateMemories.map(\.id)
+        )
+        ClickyE2EConfiguration.writePreferenceDedupPlanForE2E(snapshot)
+    }
+
+    private func writePreferenceDedupValidationForE2E(
+        _ validation: PreferenceDedupValidationResult,
+        savedMemoryID: String,
+        updatedExisting: Bool
+    ) {
+        guard ClickyE2EConfiguration.isEnabled else { return }
+
+        let outcome = ClickyE2EConfiguration.PreferenceDedupOutcomeE2ESnapshot(
+            savedMemoryID: savedMemoryID,
+            updatedExisting: updatedExisting,
+            validatorForcedCreate: validation.forcedCreate,
+            overrideReason: validation.overrideReason?.rawValue
+        )
+        ClickyE2EConfiguration.writePreferenceDedupOutcomeForE2E(outcome)
     }
 
     private func bootstrapNicheDiscovery() {

@@ -169,6 +169,25 @@ enum ClickyAnalytics {
         ])
     }
 
+    static func trackPreferenceDedupOutcome(
+        planReason: String,
+        candidateCount: Int,
+        updatedExisting: Bool,
+        validatorForcedCreate: Bool,
+        overrideReason: String?
+    ) {
+        var properties: [String: Any] = [
+            "plan_reason": planReason,
+            "candidate_count": candidateCount,
+            "updated_existing": updatedExisting,
+            "validator_forced_create": validatorForcedCreate
+        ]
+        if let overrideReason {
+            properties["override_reason"] = overrideReason
+        }
+        PostHogSDK.shared.capture("preference_dedup_outcome", properties: properties)
+    }
+
     static func trackMemoryReceiptExplained(category: MemoryCategory, memoryID: String, hadReceipt: Bool) {
         PostHogSDK.shared.capture("memory_receipt_explained", properties: [
             "category": category.rawValue,
