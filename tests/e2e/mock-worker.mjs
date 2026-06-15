@@ -38,24 +38,34 @@ function synthesisResponse(res, parsed) {
     : Array.isArray(content)
       ? content.map((part) => part.text ?? "").join("\n")
       : "";
+  const isPreference = promptText.includes("draft a preference memory");
   const isPatch = promptText.includes("patch this existing teaching skill");
 
-  const text = isPatch
-    ? [
-        "workflow: save a document in textedit",
-        "preference: keyboard shortcut only, avoid the file menu",
-        "step one: press command s to save",
-        "pointing: do not point at the file menu unless the user asks for menu steps",
-        "completion: user says got it or thanks that worked",
-      ].join("\n")
-    : [
-        "workflow: save a document in textedit",
-        "step one: click file in the menu bar",
-        "step two: choose save or press command s",
-        "pointing: start at the file menu near the top left",
-        "common mistake: looking for a floppy disk icon instead of file > save",
-        "completion: user says got it or thanks that worked",
-      ].join("\n");
+  let text = "";
+  if (isPreference) {
+    text = JSON.stringify({
+      title: "Concise responses",
+      summary: "I prefer keeping answers very short and direct.",
+      isUpdate: false
+    });
+  } else if (isPatch) {
+    text = [
+      "workflow: save a document in textedit",
+      "preference: keyboard shortcut only, avoid the file menu",
+      "step one: press command s to save",
+      "pointing: do not point at the file menu unless the user asks for menu steps",
+      "completion: user says got it or thanks that worked",
+    ].join("\n");
+  } else {
+    text = [
+      "workflow: save a document in textedit",
+      "step one: click file in the menu bar",
+      "step two: choose save or press command s",
+      "pointing: start at the file menu near the top left",
+      "common mistake: looking for a floppy disk icon instead of file > save",
+      "completion: user says got it or thanks that worked",
+    ].join("\n");
+  }
 
   jsonResponse(res, 200, {
     content: [
