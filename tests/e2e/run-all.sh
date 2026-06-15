@@ -21,6 +21,7 @@ HEADLESS_SCRIPTS=(
   teaching-skills.sh
   niche-discovery.sh
   skills-library.sh
+  proactive-preferences.sh
   full-user-journey.sh
 )
 

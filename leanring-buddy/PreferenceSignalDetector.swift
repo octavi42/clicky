@@ -94,6 +94,28 @@ enum PreferenceSignalDetector {
         "what do i "
     ]
 
+    static func detectStatedPreference(in transcript: String) -> (axis: PreferenceBehavioralAxis, phrase: String)? {
+        let normalized = transcript.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        // 1. Check explicit matches with axis affinity
+        let transcriptWords = words(from: normalized)
+        for phrase in preferencePhrases {
+            if containsContiguousWords(words(from: phrase), in: transcriptWords) {
+                let axis = PreferenceBehavioralAxis.detect(in: normalized)
+                return (axis, transcript)
+            }
+        }
+
+        // 2. Check implicit assistant behavior
+        if containsImplicitAssistantPreference(in: normalized) {
+            let axis = PreferenceBehavioralAxis.detect(in: normalized)
+            return (axis, transcript)
+        }
+
+        return nil
+    }
+
     static func hasStatedPreference(in turns: [SessionTraceEntry]) -> Bool {
         turns.contains { turn in
             containsAnyPreferenceSignal(in: turn.userTranscript)
