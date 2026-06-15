@@ -345,8 +345,11 @@ struct TeachingSkill: Identifiable, Equatable {
 
         for line in frontmatter.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-            if trimmedLine.hasPrefix("- ") {
-                listValues.append(String(trimmedLine.dropFirst(2)).trimmingCharacters(in: .whitespaces))
+            
+            // If we are in a list and this is a list item, add it.
+            // Works for "triggers:" followed by "- ship it" on next lines.
+            if trimmedLine.hasPrefix("- ") && currentListKey != nil {
+                listValues.append(unyamlEscape(String(trimmedLine.dropFirst(2)).trimmingCharacters(in: .whitespaces)))
                 continue
             }
 

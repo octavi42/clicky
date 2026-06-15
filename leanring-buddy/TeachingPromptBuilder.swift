@@ -93,6 +93,33 @@ enum TeachingPromptBuilder {
         return promptSections.joined(separator: "\n\n")
     }
 
+    /// Returns only the memory-injection suffix appended after `basePrompt`.
+    /// Used by the presenter demo's X-Ray Prompt Peek to show the exact text
+    /// Claude receives beyond the generic companion instructions.
+    static func memoryInjectionExcerpt(basePrompt: String, builtPrompt: String) -> String? {
+        let trimmedBasePrompt = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBuiltPrompt = builtPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard trimmedBuiltPrompt.count > trimmedBasePrompt.count else { return nil }
+
+        if trimmedBuiltPrompt.hasPrefix(trimmedBasePrompt) {
+            let injectionExcerpt = trimmedBuiltPrompt
+                .dropFirst(trimmedBasePrompt.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return injectionExcerpt.isEmpty ? nil : injectionExcerpt
+        }
+
+        // Defensive fallback when the base prompt was normalized differently
+        // between build and peek (should not happen in the demo scripts).
+        for sectionHeader in ["teaching skills:", "user preferences:", "recurring routines:"] {
+            if let sectionRange = trimmedBuiltPrompt.range(of: sectionHeader) {
+                return String(trimmedBuiltPrompt[sectionRange.lowerBound...])
+            }
+        }
+
+        return nil
+    }
+
     private static func renderMemory(_ memory: Memory) -> String {
         """
         - \(memory.title): \(memory.summary)

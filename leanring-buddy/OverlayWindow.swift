@@ -144,6 +144,12 @@ struct BlueCursorView: View {
     @State private var navigationBubbleOpacity: Double = 0.0
     @State private var navigationBubbleSize: CGSize = .zero
 
+    /// The ghost (generic) cursor state, used during simulations to show
+    /// where a generic AI would have pointed vs Clicky.
+    @State private var ghostCursorPosition: CGPoint = .zero
+    @State private var ghostCursorRotationDegrees: Double = -35.0
+    @State private var ghostCursorOpacity: Double = 0.0
+
     /// The cursor position at the moment navigation started, used to detect
     /// if the user moves the cursor enough to cancel the navigation.
     @State private var cursorPositionWhenNavigationStarted: CGPoint = .zero
@@ -391,6 +397,13 @@ struct BlueCursorView: View {
                     .animation(.easeIn(duration: 0.2), value: companionManager.voiceState)
             }
 
+            // Ghost cursor — shown during simulations to represent "Generic AI"
+            GhostCursorView(
+                position: ghostCursorPosition,
+                rotationDegrees: ghostCursorRotationDegrees,
+                opacity: ghostCursorOpacity
+            )
+
         }
         .frame(width: screenFrame.width, height: screenFrame.height)
         .ignoresSafeArea()
@@ -451,6 +464,24 @@ struct BlueCursorView: View {
             }
 
             startNavigatingToElement(screenLocation: screenLocation)
+        }
+        .onChange(of: companionManager.ghostElementScreenLocation) { newLocation in
+            // When a ghost element location is provided, position the ghost
+            // cursor and fade it in.
+            guard let screenLocation = newLocation else {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    ghostCursorOpacity = 0.0
+                }
+                return
+            }
+
+            let targetInSwiftUI = convertScreenPointToSwiftUICoordinates(screenLocation)
+            ghostCursorPosition = CGPoint(x: targetInSwiftUI.x + 8, y: targetInSwiftUI.y + 12)
+            ghostCursorRotationDegrees = -35.0
+
+            withAnimation(.easeIn(duration: 0.3)) {
+                ghostCursorOpacity = 1.0
+            }
         }
     }
 
@@ -767,6 +798,27 @@ struct BlueCursorView: View {
             self.welcomeText.append(self.fullWelcomeMessage[index])
             currentIndex += 1
         }
+    }
+}
+
+// MARK: - Ghost Cursor
+
+/// A grayscale version of the buddy cursor that simulates a "generic" agent's
+/// attempt to point at a standard UI location (uninformed by personal memory)
+/// before the real blue cursor arrives to knock it out of the way.
+private struct GhostCursorView: View {
+    let position: CGPoint
+    let rotationDegrees: Double
+    let opacity: Double
+
+    var body: some View {
+        Triangle()
+            .fill(Color.gray.opacity(0.4))
+            .frame(width: 16, height: 16)
+            .rotationEffect(.degrees(rotationDegrees))
+            .shadow(color: Color.gray.opacity(0.3), radius: 4, x: 0, y: 0)
+            .opacity(opacity)
+            .position(position)
     }
 }
 

@@ -123,4 +123,15 @@ enum PreferenceSameAxisMatcher {
         guard !newAxes.isEmpty, !existingAxes.isEmpty else { return false }
         return newAxes.intersection(existingAxes).isEmpty
     }
+
+    /// One axis for proactive preference stubbing when a phrase matches but several axes appear.
+    static func primaryBehavioralAxis(in text: String) -> PreferenceBehavioralAxis {
+        let detectedAxes = behavioralAxes(in: text)
+        for axis in PreferenceBehavioralAxis.allCases {
+            if detectedAxes.contains(axis) {
+                return axis
+            }
+        }
+        return .answerLength
+    }
 }

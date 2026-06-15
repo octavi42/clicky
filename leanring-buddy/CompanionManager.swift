@@ -59,6 +59,9 @@ final class CompanionManager: ObservableObject {
     /// buddy should fly to and point at. Parsed from Claude's response;
     /// observed by BlueCursorView to trigger the flight animation.
     @Published var detectedElementScreenLocation: CGPoint?
+    /// Screen location (global AppKit coords) of a ghost UI element to show
+    /// during simulations (representing where a generic AI would point).
+    @Published var ghostElementScreenLocation: CGPoint?
     /// The display frame (global AppKit coords) of the screen the detected
     /// element is on, so BlueCursorView knows which screen overlay should animate.
     @Published var detectedElementDisplayFrame: CGRect?
@@ -2150,6 +2153,7 @@ final class CompanionManager: ObservableObject {
         detectedElementScreenLocation = nil
         detectedElementDisplayFrame = nil
         detectedElementBubbleText = nil
+        ghostElementScreenLocation = nil
     }
 
     /// Called on app termination before `stop()` tears everything down. Persists

@@ -340,6 +340,37 @@ struct TeachingSkillTests {
         #expect(prompt.contains("use file > save"))
     }
 
+    @Test func memoryInjectionExcerptReturnsOnlyAppendedMemorySections() {
+        let skill = TeachingSkill(
+            id: "demo-skill-xcode-ship",
+            name: "Ship changes the team's way",
+            description: "Commit via Source Control using the team's house rules",
+            bundleIds: ["com.apple.dt.Xcode"],
+            status: .active,
+            lastUsed: nil,
+            usageCount: 1,
+            isPinned: false,
+            taskSlug: "ship",
+            triggers: ["ship it"],
+            body: "review diff then commit with imperative message"
+        )
+
+        let basePrompt = "you are clicky, a voice screen tutor. answer briefly."
+        let builtPrompt = TeachingPromptBuilder.buildVoiceResponsePrompt(
+            basePrompt: basePrompt,
+            matchedSkills: [skill]
+        )
+
+        let injectionExcerpt = TeachingPromptBuilder.memoryInjectionExcerpt(
+            basePrompt: basePrompt,
+            builtPrompt: builtPrompt
+        )
+
+        #expect(injectionExcerpt?.contains("teaching skills:") == true)
+        #expect(injectionExcerpt?.contains("Ship changes the team's way") == true)
+        #expect(injectionExcerpt?.contains(basePrompt) == false)
+    }
+
     @Test func matchedSkillAppearsInComposedPrompt() {
         let skill = TeachingSkill(
             id: "teach-textedit-save",
@@ -663,5 +694,46 @@ struct TeachingSkillTests {
 
         #expect(parsed.triggers == ["how do i save", "save this document"])
         #expect(parsed.body.contains("step one"))
+    }
+
+    @Test func higherUsageXcodeCommitSkillOutranksFreshShipItDemoSkill() {
+        // Regression guard for the Skills demo: both skills match "Ship it" via
+        // the same trigger, but SkillMatcher ranks by usageCount among ties.
+        // The demo must wipe all skills before its run or proof reads "Unexpected".
+        let establishedXcodeCommitSkill = TeachingSkill(
+            id: "teach-xcode-commit",
+            name: "Commit changes in Xcode",
+            description: "Stage and commit your current changes via Source Control",
+            bundleIds: ["com.apple.dt.Xcode"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 11,
+            isPinned: false,
+            taskSlug: "commit",
+            triggers: ["ship it", "ship my changes"],
+            body: "commit from source control"
+        )
+        let freshlyLearnedDemoShipSkill = TeachingSkill(
+            id: "demo-skill-xcode-ship",
+            name: "Ship changes the team's way",
+            description: "Commit via Source Control using the team's house rules",
+            bundleIds: ["com.apple.dt.Xcode"],
+            status: .active,
+            lastUsed: Date(),
+            usageCount: 1,
+            isPinned: false,
+            taskSlug: "ship",
+            triggers: ["ship it", "ship my changes"],
+            body: "review diff then commit with imperative message"
+        )
+
+        let matches = SkillMatcher.matchSkills(
+            from: [establishedXcodeCommitSkill, freshlyLearnedDemoShipSkill],
+            bundleId: "com.apple.dt.Xcode",
+            transcript: "Ship it"
+        )
+
+        #expect(matches.first?.skill.id == "teach-xcode-commit")
+        #expect(matches.contains { $0.skill.id == "demo-skill-xcode-ship" })
     }
 }

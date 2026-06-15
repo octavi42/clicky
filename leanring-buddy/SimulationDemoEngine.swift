@@ -37,6 +37,26 @@ enum FeatureDemoKind: Equatable {
     case nicheSuggestions
 }
 
+/// The four-stage memory loop shown in the comparison window pipeline
+/// strip and used to tag X-Ray peek panels.
+enum DemoMemoryPipelineStage: Int, CaseIterable, Hashable, Identifiable {
+    case persistedSession = 1
+    case coldPathGate = 2
+    case distillation = 3
+    case injection = 4
+
+    var id: Int { rawValue }
+
+    var stripTitle: String {
+        switch self {
+        case .persistedSession: return "Session"
+        case .coldPathGate: return "Gate"
+        case .distillation: return "Distill"
+        case .injection: return "Inject"
+        }
+    }
+}
+
 /// One conversation beat rendered in the comparison window. A demo run is a
 /// paced sequence of these; the view renders each kind differently (user
 /// bubble, Clicky bubble, system pill).
@@ -49,9 +69,12 @@ enum DemoConversationBeat: Equatable {
     /// Left-aligned Clicky bubble. `matchedSkillBadge` renders a small
     /// "Matched: <skill name>" tag under the bubble when a saved skill
     /// informed this response.
-    case clickyResponds(text: String, matchedSkillBadge: String?)
+    case clickyResponds(text: String, matchedSkillBadge: String?, ghostPoint: CGPoint? = nil)
     /// Centered pill marking a real engine event (skill saved, no match…).
     case systemEvent(iconSystemName: String, label: String, detail: String?)
+    /// Monospace X-Ray panel for one stage of the memory pipeline (session
+    /// JSON summary, gate decision, receipt, or prompt injection excerpt).
+    case xRayPeek(pipelineStage: DemoMemoryPipelineStage, sectionLabel: String, bodyText: String)
 
     /// Whether the comparison column should show the typing indicator before
     /// this beat lands (only Clicky's bubbles "think" first).
@@ -175,8 +198,11 @@ final class SimulationDemoEngine: ObservableObject {
     /// script step. nil until the run reaches its recap.
     @Published private(set) var comparisonRecapText: String?
     /// Which demo currently owns the comparison window, e.g.
-    /// "Skills · Xcode Commit Flow". nil when no run has started.
+    /// "Skills · Ship It, Your Way". nil when no run has started.
     @Published private(set) var stageDemoTitle: String?
+    /// Stages that have completed so far in the current run — drives the
+    /// four-step pipeline strip above the comparison columns.
+    @Published private(set) var memoryPipelineLitStages: Set<DemoMemoryPipelineStage> = []
 
     // MARK: Proof Panel fields (shared by all demo cards)
 
@@ -204,6 +230,7 @@ final class SimulationDemoEngine: ObservableObject {
     private let teachingSkillStore: TeachingSkillStore
     private let auxiliaryMemoryStore: AuxiliaryMemoryStore
     private let activityStore: ActivityStore
+    private let sessionStore = SessionStore()
 
     /// Set by CompanionManager right after it creates the engine. Used to
     /// refresh the published memories/suggestions the rest of the UI binds to
@@ -347,15 +374,17 @@ final class SimulationDemoEngine: ObservableObject {
 
     private func performSkillsDemoRun() async {
         activeFeatureDemoKind = .skills
-        stageDemoTitle = "Skills · Xcode Commit Flow"
+        stageDemoTitle = "Skills · Ship It, Your Way"
 
-        // Deterministic restart: forget the commit skill if a previous run or
-        // the Developer profile seeded it.
-        if teachingSkillStore.skill(withID: SkillsDemoScript.commitSkillId) != nil {
-            try? teachingSkillStore.deleteSkill(id: SkillsDemoScript.commitSkillId)
-            refreshCompanionManagerAfterStoreMutation()
-            refreshDemoStateCounts()
-        }
+        // Wipe every skill before the arc plays. A leftover Xcode commit skill
+        // from a real voice session (same bundle + "ship it" trigger, higher
+        // usageCount) will outrank the skill this demo saves mid-run and the
+        // proof step will read "Unexpected: the saved skill did not match"
+        // even though YAML round-trip and SkillMatcher are fine.
+        wipeAllTeachingSkills()
+        wipeDemoSessions()
+        refreshCompanionManagerAfterStoreMutation()
+        refreshDemoStateCounts()
 
         await playDemoScript(makeSkillsDemoScript())
         guard !Task.isCancelled else { return }
@@ -375,6 +404,9 @@ final class SimulationDemoEngine: ObservableObject {
         // matcher step writes this; the final bubble reads it for its badge).
         final class SkillsDemoRunContext {
             var savedSkillIsTopMatch = false
+            var builtVoicePromptWithSkills = ""
+            var persistedTeachingSession: PersistedSession?
+            var skillGateReasons: [GateReason] = []
         }
         let runContext = SkillsDemoRunContext()
 
@@ -416,9 +448,95 @@ final class SimulationDemoEngine: ObservableObject {
             DemoScriptStep(lane: .firstSession) {
                 .clickyResponds(text: SkillsDemoScript.confirmationAcknowledgement, matchedSkillBadge: nil)
             },
+
+            // Stage 1 — Persisted session: real SessionStore write from the
+            // scripted teaching turns (transcript, app context, outcome).
             DemoScriptStep(lane: .firstSession) { [self] in
-                // Real store write — the skill is on disk from this beat on.
-                let freshlyLearnedCommitSkill = SkillsDemoScript.makeFreshlyLearnedXcodeCommitSkill()
+                let teachingSessionTurns = SkillsDemoScript.makeTeachingSessionTrace()
+                let persistedTeachingSession = SkillsDemoScript.makePersistedSession(from: teachingSessionTurns)
+                runContext.persistedTeachingSession = persistedTeachingSession
+
+                do {
+                    _ = try sessionStore.save(persistedTeachingSession)
+                } catch {
+                    print("⚠️ Skills demo failed to persist the teaching session: \(error)")
+                }
+
+                return .systemEvent(
+                    iconSystemName: "tray.and.arrow.down.fill",
+                    label: "Session captured · \(teachingSessionTurns.count) turns",
+                    detail: "PersistedSession written to SessionStore (7-day retention in production)"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) {
+                guard let persistedTeachingSession = runContext.persistedTeachingSession else { return nil }
+                return .xRayPeek(
+                    pipelineStage: .persistedSession,
+                    sectionLabel: "persisted session",
+                    bodyText: SimulationDemoPipelineFormatter.persistedSessionExcerpt(persistedTeachingSession)
+                )
+            },
+
+            // Stage 2 — Cold-path gate: real MemoryGate rules, no LLM.
+            DemoScriptStep(lane: .firstSession) { [self] in
+                guard let persistedTeachingSession = runContext.persistedTeachingSession else {
+                    return .systemEvent(
+                        iconSystemName: "xmark.octagon",
+                        label: "Unexpected: no session to evaluate",
+                        detail: nil
+                    )
+                }
+
+                let gateDecision = MemoryGate.evaluate(
+                    session: persistedTeachingSession,
+                    topicHistory: [],
+                    isLearningEnabled: true
+                )
+                runContext.skillGateReasons = gateDecision.passedCategories[.skill] ?? []
+                let skillGatePassed = gateDecision.passes(.skill)
+
+                return .systemEvent(
+                    iconSystemName: skillGatePassed ? "shield.checkered" : "xmark.octagon",
+                    label: skillGatePassed
+                        ? "Gate passed · skill distillation"
+                        : "Unexpected: gate blocked skill distillation",
+                    detail: "MemoryGate.evaluate ran for real"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) {
+                guard let persistedTeachingSession = runContext.persistedTeachingSession else { return nil }
+                let gateDecision = MemoryGate.evaluate(
+                    session: persistedTeachingSession,
+                    topicHistory: [],
+                    isLearningEnabled: true
+                )
+                return .xRayPeek(
+                    pipelineStage: .coldPathGate,
+                    sectionLabel: "cold-path gate",
+                    bodyText: SimulationDemoPipelineFormatter.gateDecisionExcerpt(gateDecision)
+                )
+            },
+
+            // Stage 3 — Distillation: deterministic skill body + real receipt
+            // capture (production path; synthesizer LLM skipped for pitch).
+            DemoScriptStep(lane: .firstSession) { [self] in
+                guard let persistedTeachingSession = runContext.persistedTeachingSession else {
+                    return nil
+                }
+
+                var freshlyLearnedCommitSkill = SkillsDemoScript.makeFreshlyLearnedXcodeCommitSkill()
+                let skillReceipt = MemoryReceipt.capture(
+                    category: .skill,
+                    turns: persistedTeachingSession.turns,
+                    gateReasons: runContext.skillGateReasons,
+                    sessionId: persistedTeachingSession.sessionId,
+                    targetBundleId: SkillsDemoScript.xcodeBundleId,
+                    updatedExistingMemory: false,
+                    memoryTitleSnapshot: freshlyLearnedCommitSkill.name,
+                    memorySummarySnapshot: freshlyLearnedCommitSkill.description
+                )
+                freshlyLearnedCommitSkill.receipts = [skillReceipt]
+
                 do {
                     try teachingSkillStore.saveSkill(freshlyLearnedCommitSkill)
                 } catch {
@@ -432,13 +550,33 @@ final class SimulationDemoEngine: ObservableObject {
 
                 return .systemEvent(
                     iconSystemName: "brain",
-                    label: "Skill saved · \(freshlyLearnedCommitSkill.name)",
-                    detail: "Real write to the skills store — open the Brain tab to see it"
+                    label: "Distilled · \(freshlyLearnedCommitSkill.name)",
+                    detail: "TeachingSkillStore + MemoryReceipt.capture (synthesizer skipped in demo)"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                guard let persistedTeachingSession = runContext.persistedTeachingSession,
+                      let savedSkill = teachingSkillStore.skill(withID: SkillsDemoScript.commitSkillId),
+                      let latestReceipt = savedSkill.receipts.last else {
+                    return nil
+                }
+
+                return .xRayPeek(
+                    pipelineStage: .distillation,
+                    sectionLabel: "distillation + receipt",
+                    bodyText: SimulationDemoPipelineFormatter.distillationReceiptExcerpt(
+                        memoryTitle: savedSkill.name,
+                        memoryStorePath: savedSkill.folderURL.path,
+                        receipt: latestReceipt,
+                        sessionTurnCount: persistedTeachingSession.turns.count
+                    )
                 )
             },
 
-            // Second session: same ask, after Clicky has learned. The lane
-            // switch wakes up the right "Next day" column.
+            // Second session: the re-ask. The REAL matcher finds
+            // the skill, the REAL TeachingPromptBuilder injects its prompt
+            // section, and Clicky answers in a single turn with a matched badge.
+            // A "Ghost Cursor" is also triggered to show where a generic AI would point.
             DemoScriptStep(lane: .secondSession) {
                 .userSays(text: SkillsDemoScript.reAskTranscript)
             },
@@ -457,6 +595,7 @@ final class SimulationDemoEngine: ObservableObject {
                     basePrompt: SkillsDemoScript.demoBasePrompt,
                     matchedSkills: matchesAfterSave.map(\.skill)
                 )
+                runContext.builtVoicePromptWithSkills = voicePromptWithSkills
                 let promptIncludedTeachingSkillsSection =
                     voicePromptWithSkills.contains("teaching skills:")
 
@@ -470,7 +609,7 @@ final class SimulationDemoEngine: ObservableObject {
                 skillsDemoPromptIncludedProof = promptIncludedTeachingSkillsSection ? "Yes" : "No"
 
                 lastMatchedMemoryDescription = runContext.savedSkillIsTopMatch
-                    ? "Skill · Commit changes in Xcode (top match)"
+                    ? "Skill · Ship changes the team's way (top match)"
                     : "No match"
                 promptSectionsIncludedDescription = promptIncludedTeachingSkillsSection
                     ? "base + teaching skills"
@@ -485,13 +624,31 @@ final class SimulationDemoEngine: ObservableObject {
                 )
             },
             DemoScriptStep(lane: .secondSession) {
+                guard runContext.savedSkillIsTopMatch,
+                      let memoryInjectionExcerpt = TeachingPromptBuilder.memoryInjectionExcerpt(
+                          basePrompt: SkillsDemoScript.demoBasePrompt,
+                          builtPrompt: runContext.builtVoicePromptWithSkills
+                      ) else {
+                    return nil
+                }
+
+                return .xRayPeek(
+                    pipelineStage: .injection,
+                    sectionLabel: "teaching skills",
+                    bodyText: memoryInjectionExcerpt
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
                 .clickyResponds(
                     text: SkillsDemoScript.reAskResponse,
                     // Badge reflects the real matcher result from the
                     // previous step, not a hardcoded claim.
                     matchedSkillBadge: runContext.savedSkillIsTopMatch
-                        ? "Matched: Commit changes in Xcode"
-                        : nil
+                        ? "Matched: Ship changes the team's way"
+                        : nil,
+                    // Ghost point represents a generic AI pointing at the app's general location
+                    // instead of the specific house-rule location Clicky knows.
+                    ghostPoint: CGPoint(x: 400, y: 400)
                 )
             },
             DemoScriptStep(lane: .secondSession) { [self] in
@@ -507,7 +664,7 @@ final class SimulationDemoEngine: ObservableObject {
 
     // MARK: - Preferences Demo Run
 
-    /// Plays the "Short Answers + Shortcuts" arc as a before/after
+    /// Plays the "Stop Reading Code Aloud" arc as a before/after
     /// conversation in the comparison window:
     ///
     /// 1. Left column ("Before") — a screen-help question gets a verbose,
@@ -517,15 +674,16 @@ final class SimulationDemoEngine: ObservableObject {
     ///    and the Preferences count tile show it).
     /// 2. Right column ("After") — the exact same question. The REAL
     ///    TeachingPromptBuilder injects the saved preference into the
-    ///    prompt's `user preferences:` section, and Clicky answers in one
-    ///    short shortcut-first line with an applied badge.
+    ///    prompt's `user preferences:` section, and Clicky answers with a
+    ///    line number and short description instead of reading code aloud,
+    ///    with an applied badge.
     /// 3. A recap strip compares the two answer lengths.
     ///
     /// Only the conversation text is scripted (the demo must not depend on
     /// speech or network); the signal detection, store write, and prompt
     /// assembly are the production code paths. The demo preference (and the
-    /// Developer profile's two overlapping style preferences) are deleted up
-    /// front so the "before" state is honest on every run.
+    /// Developer profile's conflicting "don't read code aloud" preference)
+    /// are deleted up front so the "before" state is honest on every run.
     /// Calling this again (the window's Replay chip) restarts the run.
     func runPreferencesDemo() {
         // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
@@ -542,16 +700,17 @@ final class SimulationDemoEngine: ObservableObject {
 
     private func performPreferencesDemoRun() async {
         activeFeatureDemoKind = .preferences
-        stageDemoTitle = "Preferences · Short Answers + Shortcuts"
+        stageDemoTitle = "Preferences · Stop Reading Code Aloud"
 
         // Deterministic restart: forget the demo preference if a previous
-        // run wrote it, and the Developer profile's two style preferences —
-        // they state the same preference, which would make the verbose
-        // "before" answer dishonest right after loading that profile.
+        // run wrote it, and the Developer profile's "don't read code aloud"
+        // preference — it would suppress the verbose "before" answer (which
+        // reads code aloud), making the before/after comparison dishonest
+        // right after loading that profile.
         let preferenceIdsToForget = [
             PreferencesDemoScript.shortAnswersPreferenceId,
-            "demo-pref-short-answers",
-            "demo-pref-keyboard-shortcuts",
+            "demo-pref-no-code-readout",
+            "demo-pref-command-first",
         ]
         var deletedAnySeededPreference = false
         for preferenceId in preferenceIdsToForget where auxiliaryMemoryStore.memory(withID: preferenceId) != nil {
@@ -562,6 +721,8 @@ final class SimulationDemoEngine: ObservableObject {
             refreshCompanionManagerAfterStoreMutation()
             refreshDemoStateCounts()
         }
+
+        wipeDemoSessions()
 
         await playDemoScript(makePreferencesDemoScript())
         guard !Task.isCancelled else { return }
@@ -582,6 +743,9 @@ final class SimulationDemoEngine: ObservableObject {
         // applied badge).
         final class PreferencesDemoRunContext {
             var savedPreferenceWasInjectedIntoPrompt = false
+            var builtVoicePromptWithPreferences = ""
+            var persistedPreferenceSession: PersistedSession?
+            var preferenceGateReasons: [GateReason] = []
         }
         let runContext = PreferencesDemoRunContext()
 
@@ -597,30 +761,101 @@ final class SimulationDemoEngine: ObservableObject {
             DemoScriptStep(lane: .firstSession) {
                 .userSays(text: PreferencesDemoScript.statedPreferenceTranscript)
             },
+
+            // Stage 1 — Persisted session
             DemoScriptStep(lane: .firstSession) { [self] in
-                // Real detector over the scripted statement: this is the same
-                // deterministic gate the production memory pipeline uses to
-                // decide a session contained a stated preference.
+                let preferenceSessionTurns = PreferencesDemoScript.makePreferenceSessionTrace()
+                let persistedPreferenceSession = PreferencesDemoScript.makePersistedSession(from: preferenceSessionTurns)
+                runContext.persistedPreferenceSession = persistedPreferenceSession
+
+                do {
+                    _ = try sessionStore.save(persistedPreferenceSession)
+                } catch {
+                    print("⚠️ Preferences demo failed to persist the session: \(error)")
+                }
+
+                return .systemEvent(
+                    iconSystemName: "tray.and.arrow.down.fill",
+                    label: "Session captured · \(preferenceSessionTurns.count) turns",
+                    detail: "PersistedSession written to SessionStore"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) {
+                guard let persistedPreferenceSession = runContext.persistedPreferenceSession else { return nil }
+                return .xRayPeek(
+                    pipelineStage: .persistedSession,
+                    sectionLabel: "persisted session",
+                    bodyText: SimulationDemoPipelineFormatter.persistedSessionExcerpt(persistedPreferenceSession)
+                )
+            },
+
+            // Stage 2 — Cold-path gate (PreferenceSignalDetector + MemoryGate)
+            DemoScriptStep(lane: .firstSession) { [self] in
+                guard let persistedPreferenceSession = runContext.persistedPreferenceSession else {
+                    return .systemEvent(
+                        iconSystemName: "xmark.octagon",
+                        label: "Unexpected: no session to evaluate",
+                        detail: nil
+                    )
+                }
+
                 let statementRegisteredAsPreferenceSignal =
                     PreferenceSignalDetector.containsAnyPreferenceSignal(
                         in: PreferencesDemoScript.statedPreferenceTranscript
                     )
 
+                let gateDecision = MemoryGate.evaluate(
+                    session: persistedPreferenceSession,
+                    topicHistory: [],
+                    isLearningEnabled: true
+                )
+                runContext.preferenceGateReasons = gateDecision.passedCategories[.preference] ?? []
+                let preferenceGatePassed = gateDecision.passes(.preference)
+
                 preferencesDemoSignalDetectedProof =
-                    statementRegisteredAsPreferenceSignal ? "Yes" : "No (unexpected)"
+                    statementRegisteredAsPreferenceSignal && preferenceGatePassed ? "Yes" : "No (unexpected)"
 
                 return .systemEvent(
-                    iconSystemName: "waveform.and.magnifyingglass",
-                    label: statementRegisteredAsPreferenceSignal
-                        ? "Preference signal detected"
-                        : "Unexpected: no preference signal detected",
-                    detail: "PreferenceSignalDetector ran for real"
+                    iconSystemName: preferenceGatePassed ? "shield.checkered" : "xmark.octagon",
+                    label: preferenceGatePassed
+                        ? "Gate passed · preference distillation"
+                        : "Unexpected: gate blocked preference distillation",
+                    detail: "PreferenceSignalDetector + MemoryGate.evaluate ran for real"
                 )
             },
+            DemoScriptStep(lane: .firstSession) {
+                guard let persistedPreferenceSession = runContext.persistedPreferenceSession else { return nil }
+                let gateDecision = MemoryGate.evaluate(
+                    session: persistedPreferenceSession,
+                    topicHistory: [],
+                    isLearningEnabled: true
+                )
+                return .xRayPeek(
+                    pipelineStage: .coldPathGate,
+                    sectionLabel: "cold-path gate",
+                    bodyText: SimulationDemoPipelineFormatter.gateDecisionExcerpt(gateDecision)
+                )
+            },
+
+            // Stage 3 — Distillation + receipt
             DemoScriptStep(lane: .firstSession) { [self] in
-                // Real store write — the preference is on disk from this
-                // beat on.
-                let freshlySavedPreference = PreferencesDemoScript.makeShortAnswersPreferenceMemory()
+                guard let persistedPreferenceSession = runContext.persistedPreferenceSession else {
+                    return nil
+                }
+
+                var freshlySavedPreference = PreferencesDemoScript.makeShortAnswersPreferenceMemory()
+                let preferenceReceipt = MemoryReceipt.capture(
+                    category: .preference,
+                    turns: persistedPreferenceSession.turns,
+                    gateReasons: runContext.preferenceGateReasons,
+                    sessionId: persistedPreferenceSession.sessionId,
+                    targetBundleId: PreferencesDemoScript.xcodeBundleId,
+                    updatedExistingMemory: false,
+                    memoryTitleSnapshot: freshlySavedPreference.title,
+                    memorySummarySnapshot: freshlySavedPreference.summary
+                )
+                freshlySavedPreference.receipts = [preferenceReceipt]
+
                 do {
                     try auxiliaryMemoryStore.save(freshlySavedPreference)
                 } catch {
@@ -634,8 +869,26 @@ final class SimulationDemoEngine: ObservableObject {
 
                 return .systemEvent(
                     iconSystemName: "brain",
-                    label: "Preference saved · \(freshlySavedPreference.title)",
-                    detail: "Real write to the memory store — open the Brain tab to see it"
+                    label: "Distilled · \(freshlySavedPreference.title)",
+                    detail: "AuxiliaryMemoryStore + MemoryReceipt.capture (synthesizer skipped in demo)"
+                )
+            },
+            DemoScriptStep(lane: .firstSession) { [self] in
+                guard let persistedPreferenceSession = runContext.persistedPreferenceSession,
+                      let savedPreference = auxiliaryMemoryStore.memory(withID: PreferencesDemoScript.shortAnswersPreferenceId),
+                      let latestReceipt = savedPreference.receipts.last else {
+                    return nil
+                }
+
+                return .xRayPeek(
+                    pipelineStage: .distillation,
+                    sectionLabel: "distillation + receipt",
+                    bodyText: SimulationDemoPipelineFormatter.distillationReceiptExcerpt(
+                        memoryTitle: savedPreference.title,
+                        memoryStorePath: ClickyPaths.home.appendingPathComponent("auxiliary-memories.json").path,
+                        receipt: latestReceipt,
+                        sessionTurnCount: persistedPreferenceSession.turns.count
+                    )
                 )
             },
             DemoScriptStep(lane: .firstSession) {
@@ -671,6 +924,7 @@ final class SimulationDemoEngine: ObservableObject {
                     matchedSkills: [],
                     activePreferences: activePreferencesForPrompt
                 )
+                runContext.builtVoicePromptWithPreferences = voicePromptWithPreferences
                 let promptIncludedPreferencesSection =
                     voicePromptWithPreferences.contains("user preferences:")
 
@@ -696,13 +950,31 @@ final class SimulationDemoEngine: ObservableObject {
                 )
             },
             DemoScriptStep(lane: .secondSession) {
+                guard runContext.savedPreferenceWasInjectedIntoPrompt,
+                      let memoryInjectionExcerpt = TeachingPromptBuilder.memoryInjectionExcerpt(
+                          basePrompt: PreferencesDemoScript.demoBasePrompt,
+                          builtPrompt: runContext.builtVoicePromptWithPreferences
+                      ) else {
+                    return nil
+                }
+
+                return .xRayPeek(
+                    pipelineStage: .injection,
+                    sectionLabel: "user preferences",
+                    bodyText: memoryInjectionExcerpt
+                )
+            },
+            DemoScriptStep(lane: .secondSession) {
                 .clickyResponds(
                     text: PreferencesDemoScript.shortAnswerResponse,
                     // Badge reflects the real prompt-build result from the
                     // previous step, not a hardcoded claim.
                     matchedSkillBadge: runContext.savedPreferenceWasInjectedIntoPrompt
                         ? "Preference applied: short + shortcuts"
-                        : nil
+                        : nil,
+                    // Ghost point represents a generic AI pointing at the code editor
+                    // to read the code aloud, which the user explicitly asked to STOP.
+                    ghostPoint: CGPoint(x: 600, y: 300)
                 )
             },
             DemoScriptStep(lane: .secondSession) { [self] in
@@ -1359,12 +1631,12 @@ final class SimulationDemoEngine: ObservableObject {
     /// can narrate. Cancellation (reset / profile load / re-run) stops
     /// playback between beats.
     private func playDemoScript(_ demoScriptSteps: [DemoScriptStep]) async {
+        companionManager?.clearDetectedElementLocation()
+        
         for demoScriptStep in demoScriptSteps {
             guard !Task.isCancelled else { return }
 
             guard let beat = demoScriptStep.performSideEffectsAndProduceBeat() else {
-                // Side-effect-only step (e.g. the recap): nothing to render,
-                // no pacing pause needed.
                 continue
             }
 
@@ -1375,9 +1647,26 @@ final class SimulationDemoEngine: ObservableObject {
                 guard !Task.isCancelled else { return }
             }
 
+            // If the beat includes a ghost point, trigger it on the companion manager
+            if case .clickyResponds(_, _, let ghostPoint) = beat {
+                if let ghostPoint = ghostPoint {
+                    companionManager?.ghostElementScreenLocation = ghostPoint
+                    await pause(nanoseconds: 600_000_000)
+                }
+            }
+
             appendBeat(beat, to: demoScriptStep.lane)
 
+            if case .xRayPeek(let pipelineStage, _, _) = beat {
+                noteMemoryPipelineStageReached(pipelineStage)
+            }
+
             await pause(nanoseconds: DemoScriptPacing.pacingAfterBeatNanoseconds)
+            
+            // Clear ghost after response lands
+            if case .clickyResponds = beat {
+                companionManager?.ghostElementScreenLocation = nil
+            }
         }
     }
 
@@ -1439,6 +1728,11 @@ final class SimulationDemoEngine: ObservableObject {
         clickyTypingLane = nil
         comparisonRecapText = nil
         stageDemoTitle = nil
+        memoryPipelineLitStages = []
+    }
+
+    private func noteMemoryPipelineStageReached(_ pipelineStage: DemoMemoryPipelineStage) {
+        memoryPipelineLitStages.insert(pipelineStage)
     }
 
     private func clearProofPanel() {
@@ -1450,7 +1744,7 @@ final class SimulationDemoEngine: ObservableObject {
 
     // MARK: - Store Mutation Helpers
 
-    private func wipeAllStores() {
+    private func wipeAllTeachingSkills() {
         // Reload first so the wipe also covers entries written by other code
         // paths (or a previous app run) that aren't in memory yet.
         teachingSkillStore.loadSkills()
@@ -1461,6 +1755,10 @@ final class SimulationDemoEngine: ObservableObject {
                 print("⚠️ Demo engine failed to delete skill \(skill.id): \(error)")
             }
         }
+    }
+
+    private func wipeAllStores() {
+        wipeAllTeachingSkills()
 
         auxiliaryMemoryStore.load()
         for memory in auxiliaryMemoryStore.memories {
@@ -1472,6 +1770,14 @@ final class SimulationDemoEngine: ObservableObject {
         }
 
         activityStore.removeAllActivity()
+        wipeDemoSessions()
+    }
+
+    private func wipeDemoSessions() {
+        let fileManager = FileManager.default
+        let sessionsRootURL = SessionStore.sessionsRootURL
+        try? fileManager.removeItem(at: sessionsRootURL)
+        try? fileManager.createDirectory(at: sessionsRootURL, withIntermediateDirectories: true)
     }
 
     /// Replays each transition seed across its distinct days, spread over the
@@ -1550,20 +1856,21 @@ private enum DemoScriptPacing {
 /// text is fixed so the demo never depends on speech recognition or network;
 /// only the store write, matching, and prompt assembly are live.
 private enum SkillsDemoScript {
-    static let commitSkillId = "demo-skill-xcode-commit"
+    static let commitSkillId = "demo-skill-xcode-ship"
     static let xcodeBundleId = "com.apple.dt.Xcode"
 
-    // First session: 4 turns to success (simulated conversation).
-    static let firstAskTranscript = "Help me commit my current Xcode changes"
-    static let firstGuidanceResponse = "Sure — open the Source Control navigator with ⌘2. You'll see your changed files listed on the left."
-    static let followUpQuestionTranscript = "Okay, I see them. Where do I write the message?"
-    static let followUpGuidanceResponse = "Check the files you want included, then click the message field at the top and describe the change. When you're ready, press ⌘⏎ to commit."
-    static let confirmationTranscript = "Got it, thanks, that worked"
-    static let confirmationAcknowledgement = "Nice! I'll remember this flow for next time."
+    // First session: the user teaches Clicky their team's house rules for
+    // shipping — conventions no stateless assistant could guess.
+    static let firstAskTranscript = "Help me ship my current changes the way our team does it"
+    static let firstGuidanceResponse = "I can open the Source Control navigator (⌘2) and walk you through a commit — but \"the way your team does it\" is on me to learn. What are the rules?"
+    static let followUpQuestionTranscript = "Imperative commit messages, never add a Co-Authored-By line, and never run xcodebuild from the terminal — it nukes our screen-recording permissions."
+    static let followUpGuidanceResponse = "Got it. So: review the diff, commit from the Source Control navigator with an imperative message, no Co-Authored-By trailer, and I never suggest a terminal xcodebuild — Cmd+R in Xcode instead. Anything else?"
+    static let confirmationTranscript = "That's it. Remember that for next time."
+    static let confirmationAcknowledgement = "Locked in. I'll ship it your way from now on."
 
-    // Second session: 1 turn, informed by the saved skill.
-    static let reAskTranscript = "Help me commit in Xcode again"
-    static let reAskResponse = "Same as last time: ⌘2 for Source Control, check your files, write the message, hit ⌘⏎. You've got this."
+    // Second session: one vague ask, answered with the learned house rules.
+    static let reAskTranscript = "Ship it"
+    static let reAskResponse = "On it: review the diff, commit from Source Control (⌘2) with an imperative message — no Co-Authored-By. And I'm not touching a terminal xcodebuild; Cmd+R in Xcode if you need a build. Want me to point at the navigator?"
 
     /// Short stand-in for the production voice system prompt. The proof is
     /// about whether TeachingPromptBuilder appends the teaching-skills
@@ -1573,20 +1880,59 @@ private enum SkillsDemoScript {
     static func makeFreshlyLearnedXcodeCommitSkill() -> TeachingSkill {
         TeachingSkill(
             id: commitSkillId,
-            name: "Commit changes in Xcode",
-            description: "Stage and commit current changes via the Source Control navigator",
+            name: "Ship changes the team's way",
+            description: "Commit via Source Control using the team's house rules: imperative messages, no Co-Authored-By, never a terminal xcodebuild",
             bundleIds: [xcodeBundleId],
             status: .active,
             lastUsed: Date(),
             usageCount: 1,
             isPinned: false,
-            taskSlug: "commit",
-            triggers: ["commit in xcode", "commit my changes", "commit these changes"],
+            taskSlug: "ship",
+            triggers: ["ship it", "ship my changes", "ship these changes", "commit the team way"],
             body: """
-            1. Open the **Source Control** navigator (⌘2).
-            2. Review changed files and check the ones to include.
-            3. Enter a commit message and press **⌘⏎** to commit.
+            1. Review the diff in the **Source Control** navigator (⌘2).
+            2. Commit with an **imperative** message — no Co-Authored-By trailer.
+            3. **Never** run `xcodebuild` from the terminal (it breaks screen-recording permissions); build with **⌘R** in Xcode.
             """
+        )
+    }
+
+    static func makeTeachingSessionTrace() -> [SessionTraceEntry] {
+        let sessionStartedAt = Date().addingTimeInterval(-180)
+        return [
+            SessionTraceEntry(
+                timestamp: sessionStartedAt,
+                userTranscript: firstAskTranscript,
+                assistantResponse: firstGuidanceResponse,
+                bundleId: xcodeBundleId,
+                pointed: false
+            ),
+            SessionTraceEntry(
+                timestamp: sessionStartedAt.addingTimeInterval(30),
+                userTranscript: followUpQuestionTranscript,
+                assistantResponse: followUpGuidanceResponse,
+                bundleId: xcodeBundleId,
+                pointed: true
+            ),
+            SessionTraceEntry(
+                timestamp: sessionStartedAt.addingTimeInterval(75),
+                userTranscript: confirmationTranscript,
+                assistantResponse: confirmationAcknowledgement,
+                bundleId: xcodeBundleId,
+                pointed: false
+            ),
+        ]
+    }
+
+    static func makePersistedSession(from turns: [SessionTraceEntry]) -> PersistedSession {
+        PersistedSession(
+            sessionId: UUID(),
+            startedAt: turns.first?.timestamp ?? Date(),
+            endedAt: (turns.last?.timestamp ?? Date()).addingTimeInterval(5),
+            outcome: .success,
+            privacyOptOut: false,
+            appsUsed: [xcodeBundleId],
+            turns: turns
         )
     }
 }
@@ -1597,23 +1943,23 @@ private enum SkillsDemoScript {
 /// the rest of the conversation text is fixed so the demo never depends on
 /// speech recognition or network.
 private enum PreferencesDemoScript {
-    static let shortAnswersPreferenceId = "demo-preference-short-shortcuts"
-    static let shortAnswersPreferenceTitle = "Short answers, shortcuts first"
+    static let shortAnswersPreferenceId = "demo-preference-no-code-readout"
+    static let shortAnswersPreferenceTitle = "Don't read code aloud — line numbers only"
     static let xcodeBundleId = "com.apple.dt.Xcode"
 
     /// The same question is asked in both columns — only the saved
     /// preference differs between them.
-    static let screenHelpQuestionTranscript = "How do I add a new file to my Xcode project?"
+    static let screenHelpQuestionTranscript = "Where's the bug in this function?"
 
-    // Before: no style preference exists, so the answer is long and
-    // menu-path-first.
-    static let verboseAnswerResponse = "There are a couple of ways to do this. In the menu bar, go to File, then New, then choose File from Template. A sheet appears where you pick a template, for example Swift File, then click Next, choose where to save it in the project navigator, make sure the right target is checked under Targets, and finally click Create."
+    // Before: no style preference exists, so Clicky reads the offending
+    // code aloud — exhausting over voice.
+    static let verboseAnswerResponse = "Sure. On line forty-two you have a guard statement that reads, guard let user equals session dot current user else return nil, and then on line forty-three you call user dot id, but because the guard returns on the nil branch the optional was already unwrapped, so the real problem is up on line thirty-eight where you wrote if user equals equals nil return, using a double equals on a non-optional…"
 
-    static let statedPreferenceTranscript = "From now on, keep answers short and lead with the keyboard shortcut."
-    static let preferenceAcknowledgement = "Got it — short answers, shortcuts first. Saved."
+    static let statedPreferenceTranscript = "From now on, stop reading code aloud — just tell me the line number and what's wrong in a few words."
+    static let preferenceAcknowledgement = "Got it — no more reading code out loud. Line number and the gist only. Saved."
 
     // After: the same question through the saved preference.
-    static let shortAnswerResponse = "⌘N, pick your template, hit ⏎. Done."
+    static let shortAnswerResponse = "Line 38 — you're using `==` where you meant `=`. Want me to point at it?"
 
     /// Short stand-in for the production voice system prompt. The proof is
     /// about whether TeachingPromptBuilder appends the user-preferences
@@ -1631,14 +1977,46 @@ private enum PreferencesDemoScript {
             id: shortAnswersPreferenceId,
             category: .preference,
             title: shortAnswersPreferenceTitle,
-            summary: "Keep responses brief and lead with the keyboard shortcut",
+            summary: "Never read code aloud — give the line number and a short description instead",
             body: """
-            Answer in one or two short sentences. When a task has a keyboard
-            shortcut, give the shortcut first; mention the menu path only if
-            the user asks for it.
+            Never read source code aloud line by line. When pointing out a
+            problem in code, give the line number and a few words on what's
+            wrong, then offer to point at it on screen.
             """,
             usageCount: 1,
             lastUsed: Date()
+        )
+    }
+
+    static func makePreferenceSessionTrace() -> [SessionTraceEntry] {
+        let sessionStartedAt = Date().addingTimeInterval(-90)
+        return [
+            SessionTraceEntry(
+                timestamp: sessionStartedAt,
+                userTranscript: screenHelpQuestionTranscript,
+                assistantResponse: verboseAnswerResponse,
+                bundleId: xcodeBundleId,
+                pointed: false
+            ),
+            SessionTraceEntry(
+                timestamp: sessionStartedAt.addingTimeInterval(45),
+                userTranscript: statedPreferenceTranscript,
+                assistantResponse: "",
+                bundleId: xcodeBundleId,
+                pointed: false
+            ),
+        ]
+    }
+
+    static func makePersistedSession(from turns: [SessionTraceEntry]) -> PersistedSession {
+        PersistedSession(
+            sessionId: UUID(),
+            startedAt: turns.first?.timestamp ?? Date(),
+            endedAt: (turns.last?.timestamp ?? Date()).addingTimeInterval(5),
+            outcome: .success,
+            privacyOptOut: false,
+            appsUsed: [xcodeBundleId],
+            turns: turns
         )
     }
 }
@@ -1668,7 +2046,7 @@ private enum RoutinesDemoScript {
     static let genericAnswerResponse = "That depends on what you're working on — tell me the task and I can point you to the right place in Xcode."
 
     // After: the detected Linear → Xcode routine informs the answer.
-    static let routineAwareAnswerResponse = "You usually land in Xcode right after picking a Linear ticket. Pull up that ticket's branch and start there — want me to walk you through your usual first steps?"
+    static let routineAwareAnswerResponse = "You just came from Linear — every time you do that, your next move is a branch named after the ticket ID, then you implement against the acceptance criteria. Want me to point at the branch button so you can start the usual way?"
 
     static func daySeedPillLabel(dayDescription: String) -> String {
         "\(dayDescription) · \(linearDisplayName) → \(xcodeDisplayName) ×\(transitionsSeededPerDay)"
@@ -1858,5 +2236,74 @@ private enum AskClickyScript {
             return "Routine chip: \(detectedRoutineChipForContextApp.label)"
         }
         return nil
+    }
+}
+
+/// Formats production memory-pipeline facts into monospace X-Ray peek copy.
+private enum SimulationDemoPipelineFormatter {
+    static func persistedSessionExcerpt(_ session: PersistedSession) -> String {
+        let lastUserTranscript = session.turns.last?.userTranscript ?? "—"
+        let appsUsedList = session.appsUsed.joined(separator: ", ")
+        return """
+        sessionId: \(session.sessionId.uuidString)
+        startedAt: \(iso8601(session.startedAt))
+        endedAt: \(iso8601(session.endedAt))
+        outcome: \(session.outcome.rawValue)
+        appsUsed: \(appsUsedList.isEmpty ? "—" : appsUsedList)
+        turnCount: \(session.turns.count)
+        lastUserTranscript: "\(lastUserTranscript)"
+        retention: 7 days (production SessionStore cleanup)
+        """
+    }
+
+    static func gateDecisionExcerpt(_ gateDecision: MemoryGateDecision) -> String {
+        var lines = ["MemoryGate.evaluate →"]
+
+        if gateDecision.passedCategories.isEmpty {
+            lines.append("result: BLOCKED")
+            if !gateDecision.blockReasons.isEmpty {
+                lines.append("blockReasons: \(gateDecision.blockReasons.map(\.rawValue).joined(separator: ", "))")
+            }
+        } else {
+            lines.append("result: PASSED")
+            for category in MemoryCategory.allCases {
+                guard let gateReasons = gateDecision.passedCategories[category], !gateReasons.isEmpty else { continue }
+                let reasonLabels = gateReasons.map(\.userFacingExplanation).joined(separator: " · ")
+                lines.append("\(category.rawValue): \(reasonLabels)")
+            }
+        }
+
+        lines.append("")
+        lines.append("(deterministic rules only — no LLM at this stage)")
+        return lines.joined(separator: "\n")
+    }
+
+    static func distillationReceiptExcerpt(
+        memoryTitle: String,
+        memoryStorePath: String,
+        receipt: MemoryReceipt,
+        sessionTurnCount: Int
+    ) -> String {
+        let gateReasonLabels = receipt.gateReasons.map(\.userFacingExplanation).joined(separator: " · ")
+        let userAskLine = receipt.userAsk.map { "\"\($0)\"" } ?? "—"
+        let triggerPhraseLine = receipt.triggerPhrase.map { "\"\($0)\"" } ?? "—"
+
+        return """
+        memory: \(memoryTitle)
+        store: \(memoryStorePath)
+        sessionTurns: \(sessionTurnCount)
+        gateReasons: \(gateReasonLabels.isEmpty ? "—" : gateReasonLabels)
+        userAsk: \(userAskLine)
+        triggerPhrase: \(triggerPhraseLine)
+        userConfirmedItWorked: \(receipt.userConfirmedItWorked ? "yes" : "no")
+        synthesizer: skipped in demo (deterministic fixture body)
+        receipt: MemoryReceipt.capture → saved
+        """
+    }
+
+    private static func iso8601(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
     }
 }

@@ -83,10 +83,10 @@ enum SimulationDemoProfile: String, CaseIterable, Identifiable {
                 .whatDidYouLearnAboutMe,
                 AskClickyQuickActionPrompt(
                     kind: .repeatPrimaryWorkflow,
-                    promptText: "Help me commit in Xcode again",
+                    promptText: "Ship it",
                     workflowBundleId: "com.apple.dt.Xcode",
-                    primaryWorkflowSkillId: "demo-skill-xcode-commit",
-                    primaryWorkflowScriptedAnswer: "Same as last time: ⌘2 for Source Control, check your files, write the message, hit ⌘⏎. You've got this."
+                    primaryWorkflowSkillId: "demo-skill-xcode-ship",
+                    primaryWorkflowScriptedAnswer: "Your way: review the diff, commit from Source Control (⌘2) with an imperative message — no Co-Authored-By. No terminal xcodebuild; ⌘R in Xcode if you need a build."
                 ),
                 .whatShouldIDoNextInThisApp,
             ]
@@ -150,19 +150,19 @@ enum SimulationDemoProfile: String, CaseIterable, Identifiable {
         case .developer:
             return [
                 TeachingSkill(
-                    id: "demo-skill-xcode-commit",
-                    name: "Commit changes in Xcode",
-                    description: "Stage and commit current changes via the Source Control navigator",
+                    id: "demo-skill-xcode-ship",
+                    name: "Ship changes the team's way",
+                    description: "Commit via Source Control using the team's house rules: imperative messages, no Co-Authored-By, never a terminal xcodebuild",
                     bundleIds: ["com.apple.dt.Xcode"],
                     status: .active,
                     lastUsed: SimulationDemoFixtureDates.daysAgo(2),
                     usageCount: 3,
                     isPinned: false,
-                    taskSlug: "commit",
+                    taskSlug: "ship",
                     body: """
-                    1. Open the **Source Control** navigator (⌘2).
-                    2. Review changed files and check the ones to include.
-                    3. Enter a commit message and press **⌘⏎** to commit.
+                    1. Review the diff in the **Source Control** navigator (⌘2).
+                    2. Commit with an **imperative** message — no Co-Authored-By trailer.
+                    3. **Never** run `xcodebuild` from the terminal (it breaks screen-recording permissions); build with **⌘R** in Xcode.
                     """
                 ),
                 TeachingSkill(
@@ -295,24 +295,27 @@ enum SimulationDemoProfile: String, CaseIterable, Identifiable {
         case .developer:
             return [
                 Memory(
-                    id: "demo-pref-short-answers",
+                    id: "demo-pref-no-code-readout",
                     category: .preference,
-                    title: "Keep answers short",
-                    summary: "Prefer 1-3 step answers over long explanations",
+                    title: "Don't read code aloud — line numbers only",
+                    summary: "Never read source code aloud; give the line number and a short description instead",
                     body: """
-                    Favor short, numbered steps. Skip background explanation unless asked.
+                    Never read source code aloud line by line. When pointing out
+                    a problem in code, give the line number and a few words on
+                    what's wrong, then offer to point at it on screen.
                     """,
                     usageCount: 3,
                     lastUsed: SimulationDemoFixtureDates.daysAgo(2)
                 ),
                 Memory(
-                    id: "demo-pref-keyboard-shortcuts",
+                    id: "demo-pref-command-first",
                     category: .preference,
-                    title: "Prefer keyboard shortcuts",
-                    summary: "Lead with the shortcut, mention the menu path second",
+                    title: "Command first, no preamble",
+                    summary: "Lead with the exact shortcut or command; skip the intro",
                     body: """
-                    When a task has a keyboard shortcut, give the shortcut first
-                    (e.g. ⌘2 for Source Control) and the menu path as a fallback.
+                    Open with the exact keyboard shortcut or command (e.g. ⌘2
+                    for Source Control). No "sure, here's how" preamble — just
+                    the action, then a one-line why if it matters.
                     """,
                     usageCount: 2,
                     lastUsed: SimulationDemoFixtureDates.daysAgo(2)
@@ -320,12 +323,12 @@ enum SimulationDemoProfile: String, CaseIterable, Identifiable {
                 Memory(
                     id: "demo-routine-linear-to-xcode",
                     category: .routine,
-                    title: "Start coding from a Linear ticket",
-                    summary: "Pick a ticket in Linear, then implement it in Xcode",
+                    title: "Ticket → branch → implement",
+                    summary: "After picking a Linear ticket, branch on the ticket ID in Xcode and code to the acceptance criteria",
                     body: """
                     1. Pick the next ticket in Linear and read the acceptance criteria.
-                    2. Switch to Xcode and create a branch named after the ticket.
-                    3. Implement, then commit referencing the ticket ID.
+                    2. Switch to Xcode and create a branch named after the ticket ID.
+                    3. Implement against the criteria, then commit referencing the ticket ID.
                     """,
                     bundleIds: ["com.apple.dt.Xcode"],
                     usageCount: 4,

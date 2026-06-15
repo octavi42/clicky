@@ -15,7 +15,7 @@ struct ProactivePreferenceTests {
         let result = PreferenceSignalDetector.detectStatedPreference(in: transcript)
         
         #expect(result != nil)
-        #expect(result?.axis == .verbosity)
+        #expect(result?.axis == .answerLength)
         #expect(result?.phrase == transcript)
     }
 
@@ -39,7 +39,7 @@ struct ProactivePreferenceTests {
         let result = PreferenceSignalDetector.detectStatedPreference(in: transcript)
         
         #expect(result != nil)
-        #expect(result?.axis == .interactionStyle)
+        #expect(result?.axis == .inputModality)
     }
 
 }

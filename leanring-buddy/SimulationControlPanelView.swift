@@ -193,12 +193,12 @@ struct SimulationControlPanelView: View {
                 demoRunStatusIndicator(for: simulationDemoEngine.skillsDemoRunState)
             }
 
-            Text("Xcode Commit Flow")
+            Text("Ship It, Your Way")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(DS.Colors.textPrimary)
                 .padding(.top, 10)
 
-            Text("Proves Clicky learns a successful screen workflow and reuses it the next time the user asks.")
+            Text("Proves Clicky learns the team's house rules for a workflow — conventions no stateless assistant could guess — and reuses them from a one-word ask.")
                 .font(.system(size: 11))
                 .lineSpacing(2)
                 .foregroundColor(DS.Colors.textTertiary)
@@ -258,7 +258,7 @@ struct SimulationControlPanelView: View {
     // MARK: - Preferences Card (live)
 
     /// Live Preferences card. Run opens the before/after comparison window
-    /// and plays the scripted "Short Answers + Shortcuts" arc there, driving
+    /// and plays the scripted "Stop Reading Code Aloud" arc there, driving
     /// the real PreferenceSignalDetector, memory store, and prompt builder;
     /// the card stays a compact dashboard whose proof values stream in as
     /// the run advances.
@@ -279,12 +279,12 @@ struct SimulationControlPanelView: View {
                 demoRunStatusIndicator(for: simulationDemoEngine.preferencesDemoRunState)
             }
 
-            Text("Short Answers + Shortcuts")
+            Text("Stop Reading Code Aloud")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(DS.Colors.textPrimary)
                 .padding(.top, 10)
 
-            Text("Proves Clicky learns how the user wants to be taught and answers in that style.")
+            Text("Proves Clicky learns to STOP doing something annoying — a negative-space preference no assistant defaults to — and applies it next time.")
                 .font(.system(size: 11))
                 .lineSpacing(2)
                 .foregroundColor(DS.Colors.textTertiary)

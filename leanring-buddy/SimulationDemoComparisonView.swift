@@ -22,11 +22,23 @@ import SwiftUI
 
 struct SimulationDemoComparisonView: View {
     @ObservedObject var simulationDemoEngine: SimulationDemoEngine
+    @State private var expandedPipelineStages: Set<DemoMemoryPipelineStage> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if simulationDemoEngine.stageDemoTitle != nil {
                 comparisonHeaderRow
+
+                Rectangle()
+                    .fill(DS.Colors.borderSubtle.opacity(0.5))
+                    .frame(height: 0.5)
+
+                ExpandableMemoryPipelineNavigator(
+                    simulationDemoEngine: simulationDemoEngine,
+                    expandedPipelineStages: $expandedPipelineStages
+                )
+                .padding(.horizontal, DS.Spacing.xl)
+                .padding(.vertical, DS.Spacing.md)
 
                 Rectangle()
                     .fill(DS.Colors.borderSubtle.opacity(0.5))
@@ -52,6 +64,19 @@ struct SimulationDemoComparisonView: View {
             .easeOut(duration: DS.Animation.normal),
             value: simulationDemoEngine.comparisonRecapText
         )
+        .animation(
+            .easeOut(duration: DS.Animation.normal),
+            value: simulationDemoEngine.memoryPipelineLitStages
+        )
+        .animation(
+            .easeOut(duration: DS.Animation.normal),
+            value: expandedPipelineStages
+        )
+        .onChange(of: simulationDemoEngine.memoryPipelineLitStages) { _, litPipelineStages in
+            if litPipelineStages.isEmpty {
+                expandedPipelineStages = []
+            }
+        }
     }
 
     // MARK: - Header
@@ -284,12 +309,13 @@ struct SimulationDemoComparisonView: View {
         switch stageBeat.beat {
         case .userSays(let text):
             StageUserSpeechBubbleRow(text: text)
-        case .clickyResponds(let text, let matchedSkillBadge):
+        case .clickyResponds(let text, let matchedSkillBadge, _):
             StageClickyResponseBubbleRow(text: text, matchedSkillBadge: matchedSkillBadge)
         case .systemEvent(let iconSystemName, let label, let detail):
             StageSystemEventRow(iconSystemName: iconSystemName, label: label, detail: detail)
+        case .xRayPeek:
+            EmptyView()
         }
-    }
 
     // MARK: - Placeholders
 
@@ -322,6 +348,115 @@ struct SimulationDemoComparisonView: View {
                 .foregroundColor(DS.Colors.textTertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Expandable Memory Pipeline
+
+/// Clickable four-stage navigator. Each stage expands to show its X-Ray
+/// peek once the demo has run that part of the real memory pipeline.
+private struct ExpandableMemoryPipelineNavigator: View {
+    @ObservedObject var simulationDemoEngine: SimulationDemoEngine
+    @Binding var expandedPipelineStages: Set<DemoMemoryPipelineStage>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+            HStack(spacing: 0) {
+                ForEach(Array(DemoMemoryPipelineStage.allCases.enumerated()), id: \.element.id) { index, pipelineStage in
+                    if index > 0 {
+                        pipelineConnector(
+                            isLit: simulationDemoEngine.memoryPipelineLitStages.contains(pipelineStage)
+                        )
+                    }
+
+                    pipelineStageButton(pipelineStage: pipelineStage)
+                }
+            }
+
+            ForEach(DemoMemoryPipelineStage.allCases) { pipelineStage in
+                if expandedPipelineStages.contains(pipelineStage),
+                   simulationDemoEngine.memoryPipelineLitStages.contains(pipelineStage),
+                   let xRayPeekContent = xRayPeekContent(for: pipelineStage) {
+                    StageXRayPeekRow(
+                        pipelineStage: pipelineStage,
+                        sectionLabel: xRayPeekContent.sectionLabel,
+                        bodyText: xRayPeekContent.bodyText
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func pipelineStageButton(pipelineStage: DemoMemoryPipelineStage) -> some View {
+        let isLit = simulationDemoEngine.memoryPipelineLitStages.contains(pipelineStage)
+        let isExpanded = expandedPipelineStages.contains(pipelineStage)
+
+        return Button {
+            guard isLit else { return }
+            withAnimation(.easeOut(duration: DS.Animation.normal)) {
+                if isExpanded {
+                    expandedPipelineStages.remove(pipelineStage)
+                } else {
+                    expandedPipelineStages.insert(pipelineStage)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                VStack(spacing: 4) {
+                    Text("\(pipelineStage.rawValue)")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(isLit ? Color.orange.opacity(0.95) : DS.Colors.textTertiary)
+
+                    Text(pipelineStage.stripTitle.uppercased())
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(0.5)
+                        .foregroundColor(isLit ? DS.Colors.textPrimary : DS.Colors.textTertiary)
+                }
+
+                if isLit {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(Color.orange.opacity(0.8))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .fill(isExpanded && isLit ? Color.orange.opacity(0.18) : (isLit ? Color.orange.opacity(0.12) : DS.Colors.surface2.opacity(0.6)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .stroke(
+                        isExpanded && isLit ? Color.orange.opacity(0.65) : (isLit ? Color.orange.opacity(0.45) : DS.Colors.borderSubtle),
+                        lineWidth: isExpanded && isLit ? 1.25 : (isLit ? 1 : 0.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .opacity(isLit ? 1 : 0.55)
+        .disabled(!isLit)
+    }
+
+    private func pipelineConnector(isLit: Bool) -> some View {
+        Rectangle()
+            .fill(isLit ? Color.orange.opacity(0.45) : DS.Colors.borderSubtle)
+            .frame(width: 18, height: 1.5)
+            .padding(.horizontal, 4)
+    }
+
+    private func xRayPeekContent(for pipelineStage: DemoMemoryPipelineStage) -> (sectionLabel: String, bodyText: String)? {
+        let allStageBeats = simulationDemoEngine.firstSessionLaneBeats + simulationDemoEngine.secondSessionLaneBeats
+        for stageBeat in allStageBeats.reversed() {
+            if case .xRayPeek(let beatPipelineStage, let sectionLabel, let bodyText) = stageBeat.beat,
+               beatPipelineStage == pipelineStage {
+                return (sectionLabel, bodyText)
+            }
+        }
+        return nil
     }
 }
 
@@ -501,6 +636,56 @@ private struct StageSystemEventRow: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 2)
+    }
+}
+
+/// Terminal-style panel revealing one stage of the memory pipeline.
+private struct StageXRayPeekRow: View {
+    let pipelineStage: DemoMemoryPipelineStage
+    let sectionLabel: String
+    let bodyText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color.orange.opacity(0.9))
+
+                Text("X-RAY · STAGE \(pipelineStage.rawValue)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundColor(Color.orange.opacity(0.9))
+
+                Text("·")
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                Text(sectionLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+            }
+
+            ScrollView {
+                Text(bodyText)
+                    .font(.system(size: 10, design: .monospaced))
+                    .lineSpacing(3)
+                    .foregroundColor(DS.Colors.textPrimary.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 160)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .fill(Color.black.opacity(0.35))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 0.75)
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
     }
 }
