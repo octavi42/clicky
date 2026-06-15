@@ -326,6 +326,12 @@ final class SimulationDemoEngine: ObservableObject {
 
     // MARK: - Skills Demo Run
 
+    /// Cancels any in-flight feature demo and clears comparison playback
+    /// state. Called when the presenter closes the comparison window.
+    func stopActiveFeatureDemoRun() {
+        clearFeatureDemoRunPresentations()
+    }
+
     /// Plays the full "learn then reuse" Xcode commit arc as a before/after
     /// conversation in the comparison window:
     ///
@@ -345,10 +351,6 @@ final class SimulationDemoEngine: ObservableObject {
     /// loading the Developer profile (which seeds that same skill).
     /// Calling this again (the window's Replay chip) restarts the run.
     func runSkillsDemo() {
-        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
-        // allowed — the clear below cancels the other demo's task first.
-        guard !skillsDemoRunState.isRunning else { return }
-
         clearFeatureDemoRunPresentations()
         skillsDemoRunState = .running
 
@@ -683,10 +685,6 @@ final class SimulationDemoEngine: ObservableObject {
     /// are deleted up front so the "before" state is honest on every run.
     /// Calling this again (the window's Replay chip) restarts the run.
     func runPreferencesDemo() {
-        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
-        // allowed — the clear below cancels the other demo's task first.
-        guard !preferencesDemoRunState.isRunning else { return }
-
         clearFeatureDemoRunPresentations()
         preferencesDemoRunState = .running
 
@@ -1022,10 +1020,6 @@ final class SimulationDemoEngine: ObservableObject {
     /// profile (which seeds that same edge).
     /// Calling this again (the window's Replay chip) restarts the run.
     func runRoutinesDemo() {
-        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
-        // allowed — the clear below cancels the other demo's task first.
-        guard !routinesDemoRunState.isRunning else { return }
-
         clearFeatureDemoRunPresentations()
         routinesDemoRunState = .running
 
@@ -1257,10 +1251,6 @@ final class SimulationDemoEngine: ObservableObject {
     /// the Developer profile (which sets that same override).
     /// Calling this again (the window's Replay chip) restarts the run.
     func runNicheSuggestionsDemo() {
-        // Re-pressing Run mid-run is ignored; starting a DIFFERENT demo is
-        // allowed — the clear below cancels the other demo's task first.
-        guard !nicheSuggestionsDemoRunState.isRunning else { return }
-
         clearFeatureDemoRunPresentations()
         nicheSuggestionsDemoRunState = .running
 

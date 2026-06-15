@@ -22,7 +22,7 @@ extension Notification.Name {
 }
 
 @MainActor
-final class SimulationDemoComparisonWindowManager: NSObject {
+final class SimulationDemoComparisonWindowManager: NSObject, NSWindowDelegate {
     private var comparisonWindow: NSWindow?
     private var openComparisonWindowObserver: NSObjectProtocol?
 
@@ -87,7 +87,12 @@ final class SimulationDemoComparisonWindowManager: NSObject {
         comparisonDemoWindow.minSize = NSSize(width: 1000, height: 620)
         comparisonDemoWindow.contentView = hostingView
         comparisonDemoWindow.center()
+        comparisonDemoWindow.delegate = self
 
         comparisonWindow = comparisonDemoWindow
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        companionManager.simulationDemoEngine.stopActiveFeatureDemoRun()
     }
 }
