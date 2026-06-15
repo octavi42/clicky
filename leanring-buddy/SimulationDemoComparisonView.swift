@@ -511,51 +511,44 @@ private struct StageSystemEventRow: View {
     }
 }
 
-/// Terminal-style panel revealing one stage of the memory pipeline. Tap the
-/// header to expand or collapse the monospace peek body.
+/// Terminal-style panel revealing one stage of the memory pipeline. Tap
+/// anywhere on the card to expand or collapse the monospace peek body.
 private struct StageXRayPeekRow: View {
     let pipelineStage: DemoMemoryPipelineStage
     let sectionLabel: String
     let bodyText: String
 
-    @State private var isExpanded = true
+    @State private var isExpanded = false
+
+    private let expandCollapseAnimation = Animation.spring(response: 0.42, dampingFraction: 0.86)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: isExpanded ? 8 : 0) {
-            Button {
-                withAnimation(.easeOut(duration: DS.Animation.normal)) {
-                    isExpanded.toggle()
-                }
-            } label: {
+        Button {
+            withAnimation(expandCollapseAnimation) {
+                isExpanded.toggle()
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.orange.opacity(0.9))
+                        .foregroundColor(Color.orange.opacity(isExpanded ? 0.9 : 0.75))
 
                     Text("X-RAY · \(pipelineStage.displayTitle.uppercased())")
                         .font(.system(size: 10, weight: .semibold))
                         .tracking(0.6)
-                        .foregroundColor(Color.orange.opacity(0.9))
+                        .foregroundColor(Color.orange.opacity(isExpanded ? 0.9 : 0.75))
 
                     Text("·")
                         .foregroundColor(DS.Colors.textTertiary)
 
                     Text(sectionLabel)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
+                        .foregroundColor(isExpanded ? DS.Colors.textSecondary : DS.Colors.textTertiary)
                         .lineLimit(1)
-
-                    Spacer(minLength: 0)
-
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Color.orange.opacity(0.8))
                 }
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
+                .animation(expandCollapseAnimation, value: isExpanded)
 
-            if isExpanded {
                 ScrollView {
                     Text(bodyText)
                         .font(.system(size: 10, design: .monospaced))
@@ -564,22 +557,31 @@ private struct StageXRayPeekRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
-                .frame(maxHeight: 160)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .frame(maxHeight: isExpanded ? 160 : 0, alignment: .top)
+                .opacity(isExpanded ? 1 : 0)
+                .padding(.top, isExpanded ? 8 : 0)
+                .clipped()
+                .allowsHitTesting(isExpanded)
+                .animation(expandCollapseAnimation, value: isExpanded)
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .fill(Color.black.opacity(isExpanded ? 0.35 : 0.28))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .stroke(Color.orange.opacity(isExpanded ? 0.45 : 0.28), lineWidth: 0.75)
+            )
+            .contentShape(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+            )
+            .animation(expandCollapseAnimation, value: isExpanded)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                .fill(Color.black.opacity(0.35))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                .stroke(Color.orange.opacity(isExpanded ? 0.45 : 0.3), lineWidth: 0.75)
-        )
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .pointerCursor()
         .padding(.vertical, 2)
-        .animation(.easeOut(duration: DS.Animation.normal), value: isExpanded)
     }
 }
 
