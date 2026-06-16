@@ -11,7 +11,6 @@
 //    learned anything, playing beat by beat.
 //  - Right column: stays in a dimmed waiting state until the first session
 //    ends, then the informed "after" session plays in it.
-//  - A recap strip spanning both columns lands last.
 //
 //  The view is demo-agnostic: it renders whatever lane beats the engine
 //  publishes. Each feature demo (Skills, Preferences, Routines, Niche
@@ -24,23 +23,10 @@ struct SimulationDemoComparisonView: View {
     @ObservedObject var simulationDemoEngine: SimulationDemoEngine
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        Group {
             if simulationDemoEngine.stageDemoTitle != nil {
-                comparisonHeaderRow
-
-                Rectangle()
-                    .fill(DS.Colors.borderSubtle.opacity(0.5))
-                    .frame(height: 0.5)
-
                 comparisonLaneColumns
                     .padding(DS.Spacing.xl)
-
-                if let comparisonRecapText = simulationDemoEngine.comparisonRecapText {
-                    StageRecapRow(text: comparisonRecapText)
-                        .padding(.horizontal, DS.Spacing.xl)
-                        .padding(.bottom, DS.Spacing.xl)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
             } else {
                 comparisonIdlePlaceholder
             }
@@ -48,45 +34,6 @@ struct SimulationDemoComparisonView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(DS.Colors.background)
         .frame(minWidth: 1000, minHeight: 620)
-        .animation(
-            .easeOut(duration: DS.Animation.normal),
-            value: simulationDemoEngine.comparisonRecapText
-        )
-    }
-
-    // MARK: - Header
-
-    private var comparisonHeaderRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(simulationDemoEngine.stageDemoTitle ?? "")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(DS.Colors.textPrimary)
-
-                Text("Same ask, before and after Clicky has learned · conversation text simulated, memory operations real")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-            }
-
-            Spacer()
-
-            // Replay restarts whichever demo currently owns the window —
-            // the engine knows which script that is.
-            if case .finished = simulationDemoEngine.activeFeatureDemoRunState {
-                SimulationControlPanelChipButton(
-                    title: "Replay",
-                    iconSystemName: "arrow.counterclockwise",
-                    action: {
-                        simulationDemoEngine.replayActiveFeatureDemo()
-                    }
-                )
-            }
-        }
-        // Reserve the chip's height even while it's hidden during playback,
-        // so the header doesn't jump when the run finishes.
-        .frame(minHeight: 31)
-        .padding(.horizontal, DS.Spacing.xl)
-        .padding(.vertical, DS.Spacing.lg)
     }
 
     // MARK: - Lane Columns
@@ -233,8 +180,20 @@ struct SimulationDemoComparisonView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Spacing.md) {
                     ForEach(laneBeats) { stageBeat in
-                        comparisonBeatRow(stageBeat)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        comparisonBeatRow(
+                            stageBeat,
+                            shouldAnimateScribbleReveal: shouldAnimateScribbleReveal(
+                                for: stageBeat,
+                                in: laneBeats
+                            ),
+                            onScribbleRevealProgress: {
+                                laneScrollProxy.scrollTo(
+                                    Self.laneBottomAnchorId(for: lane),
+                                    anchor: .bottom
+                                )
+                            }
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
 
                     if simulationDemoEngine.clickyTypingLane == lane {
@@ -279,20 +238,38 @@ struct SimulationDemoComparisonView: View {
         }
     }
 
+    /// Only the newest Clicky bubble in a lane scribbles in; user messages and
+    /// earlier agent bubbles snap to full text immediately.
+    private func shouldAnimateScribbleReveal(
+        for stageBeat: DemoStageBeat,
+        in laneBeats: [DemoStageBeat]
+    ) -> Bool {
+        guard stageBeat.id == laneBeats.last?.id else { return false }
+        if case .clickyResponds = stageBeat.beat { return true }
+        return false
+    }
+
     @ViewBuilder
-    private func comparisonBeatRow(_ stageBeat: DemoStageBeat) -> some View {
+    private func comparisonBeatRow(
+        _ stageBeat: DemoStageBeat,
+        shouldAnimateScribbleReveal: Bool,
+        onScribbleRevealProgress: @escaping () -> Void
+    ) -> some View {
         switch stageBeat.beat {
         case .userSays(let text):
             StageUserSpeechBubbleRow(text: text)
-        case .clickyResponds(let text, let matchedSkillBadge, _):
-            StageClickyResponseBubbleRow(text: text, matchedSkillBadge: matchedSkillBadge)
-        case .systemEvent(let iconSystemName, let label, let detail):
-            StageSystemEventRow(iconSystemName: iconSystemName, label: label, detail: detail)
-        case .xRayPeek(let pipelineStage, let sectionLabel, let bodyText):
-            StageXRayPeekRow(
-                pipelineStage: pipelineStage,
-                sectionLabel: sectionLabel,
-                bodyText: bodyText
+        case .clickyResponds(let text, _):
+            StageClickyResponseBubbleRow(
+                text: text,
+                shouldAnimateScribbleReveal: shouldAnimateScribbleReveal,
+                onScribbleRevealProgress: onScribbleRevealProgress
+            )
+        case .demoInsight(let iconSystemName, let label, let detail, let insightBody):
+            StageDemoInsightRow(
+                iconSystemName: iconSystemName,
+                label: label,
+                detail: detail,
+                insightBody: insightBody
             )
         }
     }
@@ -333,6 +310,100 @@ struct SimulationDemoComparisonView: View {
 
 // MARK: - Conversation Rows
 
+/// Reveals chat copy one character at a time — the same scribble rhythm as
+/// the cursor overlay's navigation bubble, tuned for demo column width.
+private struct StageScribbleText: View {
+    let fullText: String
+    let shouldAnimateReveal: Bool
+    var onRevealProgress: (() -> Void)? = nil
+    var onRevealComplete: (() -> Void)? = nil
+
+    @State private var revealedCharacterCount: Int = 0
+    @State private var revealTask: Task<Void, Never>?
+
+    private var isRevealComplete: Bool {
+        revealedCharacterCount >= fullText.count
+    }
+
+    private var displayedText: String {
+        String(fullText.prefix(revealedCharacterCount))
+    }
+
+    var body: some View {
+        Text(displayedText)
+            .onAppear {
+                resetRevealStateForCurrentMode()
+            }
+            .onChange(of: fullText) { _, _ in
+                resetRevealStateForCurrentMode()
+            }
+            .onChange(of: shouldAnimateReveal) { _, shouldAnimateReveal in
+                if shouldAnimateReveal {
+                    startCharacterRevealIfNeeded()
+                } else {
+                    snapToFullText()
+                }
+            }
+            .onDisappear {
+                revealTask?.cancel()
+                revealTask = nil
+            }
+    }
+
+    private func resetRevealStateForCurrentMode() {
+        revealTask?.cancel()
+        revealedCharacterCount = 0
+
+        if shouldAnimateReveal {
+            startCharacterRevealIfNeeded()
+        } else {
+            snapToFullText()
+        }
+    }
+
+    private func snapToFullText() {
+        revealTask?.cancel()
+        revealTask = nil
+        revealedCharacterCount = fullText.count
+        onRevealComplete?()
+    }
+
+    private func startCharacterRevealIfNeeded() {
+        guard shouldAnimateReveal, !isRevealComplete else { return }
+        guard revealTask == nil else { return }
+
+        let delayPerCharacterNanoseconds = Self.delayPerCharacterNanoseconds(for: fullText)
+
+        revealTask = Task { @MainActor in
+            for characterIndex in 0..<fullText.count {
+                guard !Task.isCancelled else { return }
+
+                if characterIndex > 0 {
+                    try? await Task.sleep(nanoseconds: delayPerCharacterNanoseconds)
+                    guard !Task.isCancelled else { return }
+                }
+
+                revealedCharacterCount = characterIndex + 1
+
+                if revealedCharacterCount % 4 == 0 || revealedCharacterCount == fullText.count {
+                    onRevealProgress?()
+                }
+            }
+
+            onRevealComplete?()
+            revealTask = nil
+        }
+    }
+
+    /// Keeps short asks snappy and long Clicky answers readable within ~0.8–2.5s.
+    private static func delayPerCharacterNanoseconds(for fullText: String) -> UInt64 {
+        let characterCount = max(fullText.count, 1)
+        let targetRevealDurationSeconds = min(2.5, max(0.8, Double(characterCount) * 0.018))
+        let delaySeconds = targetRevealDurationSeconds / Double(characterCount)
+        return UInt64(delaySeconds * 1_000_000_000)
+    }
+}
+
 /// Right-aligned bubble for what the user "says" in a demo script, styled
 /// like a sent chat message.
 private struct StageUserSpeechBubbleRow: View {
@@ -360,47 +431,31 @@ private struct StageUserSpeechBubbleRow: View {
     }
 }
 
-/// Left-aligned Clicky bubble with the blue cursor avatar. When the engine
-/// proves a saved skill informed the answer, a "Matched: …" badge renders
-/// under the bubble.
+/// Left-aligned Clicky bubble with the blue cursor avatar.
 private struct StageClickyResponseBubbleRow: View {
     let text: String
-    let matchedSkillBadge: String?
+    let shouldAnimateScribbleReveal: Bool
+    let onScribbleRevealProgress: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.Spacing.sm) {
             StageClickyAvatar()
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(text)
-                    .font(.system(size: 13))
-                    .lineSpacing(3)
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
-                            .fill(DS.Colors.surface3)
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let matchedSkillBadge {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 9, weight: .semibold))
-
-                        Text(matchedSkillBadge)
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundColor(DS.Colors.accentText)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(DS.Colors.accent.opacity(0.14))
-                    )
-                }
-            }
+            StageScribbleText(
+                fullText: text,
+                shouldAnimateReveal: shouldAnimateScribbleReveal,
+                onRevealProgress: onScribbleRevealProgress
+            )
+            .font(.system(size: 13))
+            .lineSpacing(3)
+            .foregroundColor(DS.Colors.textPrimary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                    .fill(DS.Colors.surface3)
+            )
+            .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 60)
         }
@@ -469,148 +524,93 @@ private struct StageTypingIndicatorDots: View {
     }
 }
 
-/// Centered pill marking a real engine event (skill saved, matcher result),
-/// with an optional quieter detail line underneath.
-private struct StageSystemEventRow: View {
+/// Centered insight pill for a memory-pipeline step. Tap to fade in the
+/// short detail line and/or a monospace peek at what actually ran.
+private struct StageDemoInsightRow: View {
     let iconSystemName: String
     let label: String
     let detail: String?
-
-    var body: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: iconSystemName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(DS.Colors.accentText)
-
-                Text(label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(DS.Colors.surface2)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
-            )
-
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 2)
-    }
-}
-
-/// Terminal-style panel revealing one stage of the memory pipeline. Tap
-/// anywhere on the card to expand or collapse the monospace peek body.
-private struct StageXRayPeekRow: View {
-    let pipelineStage: DemoMemoryPipelineStage
-    let sectionLabel: String
-    let bodyText: String
+    let insightBody: String?
 
     @State private var isExpanded = false
 
-    private let expandCollapseAnimation = Animation.spring(response: 0.42, dampingFraction: 0.86)
+    private let expandFadeAnimation = Animation.easeOut(duration: DS.Animation.normal)
 
-    var body: some View {
-        Button {
-            withAnimation(expandCollapseAnimation) {
-                isExpanded.toggle()
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
-                    Image(systemName: "viewfinder")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.orange.opacity(isExpanded ? 0.9 : 0.75))
-
-                    Text("X-RAY · \(pipelineStage.displayTitle.uppercased())")
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundColor(Color.orange.opacity(isExpanded ? 0.9 : 0.75))
-
-                    Text("·")
-                        .foregroundColor(DS.Colors.textTertiary)
-
-                    Text(sectionLabel)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(isExpanded ? DS.Colors.textSecondary : DS.Colors.textTertiary)
-                        .lineLimit(1)
-                }
-                .animation(expandCollapseAnimation, value: isExpanded)
-
-                ScrollView {
-                    Text(bodyText)
-                        .font(.system(size: 10, design: .monospaced))
-                        .lineSpacing(3)
-                        .foregroundColor(DS.Colors.textPrimary.opacity(0.92))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: isExpanded ? 160 : 0, alignment: .top)
-                .opacity(isExpanded ? 1 : 0)
-                .padding(.top, isExpanded ? 8 : 0)
-                .clipped()
-                .allowsHitTesting(isExpanded)
-                .animation(expandCollapseAnimation, value: isExpanded)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                    .fill(Color.black.opacity(isExpanded ? 0.35 : 0.28))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                    .stroke(Color.orange.opacity(isExpanded ? 0.45 : 0.28), lineWidth: 0.75)
-            )
-            .contentShape(
-                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-            )
-            .animation(expandCollapseAnimation, value: isExpanded)
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .padding(.vertical, 2)
+    private var hasExpandableContent: Bool {
+        detail != nil || insightBody != nil
     }
-}
-
-/// Emphasized full-width strip closing a demo run with its headline metric.
-/// Spans both comparison columns.
-private struct StageRecapRow: View {
-    let text: String
 
     var body: some View {
-        HStack(spacing: DS.Spacing.sm) {
-            Image(systemName: "chart.line.uptrend.xyaxis")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.Colors.accentText)
+        VStack(spacing: DS.Spacing.sm) {
+            Button {
+                guard hasExpandableContent else { return }
+                withAnimation(expandFadeAnimation) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: iconSystemName)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.accentText)
 
-            Text(text)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
+                    Text(label)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.sm)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(DS.Colors.surface2)
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+                )
+                .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .pointerCursor(isEnabled: hasExpandableContent)
 
-            Spacer()
+            if isExpanded {
+                VStack(spacing: DS.Spacing.md) {
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, DS.Spacing.sm)
+                    }
+
+                    if let insightBody {
+                        ScrollView {
+                            Text(insightBody)
+                                .font(.system(size: 10, design: .monospaced))
+                                .lineSpacing(3)
+                                .foregroundColor(DS.Colors.textPrimary.opacity(0.92))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 160, alignment: .top)
+                        .padding(DS.Spacing.md)
+                        .background(
+                            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                                .fill(DS.Colors.surface2)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                                .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
+                        )
+                    }
+                }
+                .padding(.top, DS.Spacing.xs)
+                .transition(.opacity)
+            }
         }
-        .padding(.horizontal, DS.Spacing.lg)
-        .padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
-                .fill(DS.Colors.accent.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
-                .stroke(DS.Colors.accent.opacity(0.35), lineWidth: 0.5)
-        )
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, DS.Spacing.sm)
+        .padding(.vertical, DS.Spacing.sm)
+        .animation(expandFadeAnimation, value: isExpanded)
     }
 }

@@ -24,6 +24,8 @@ struct SimulationControlPanelView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var simulationDemoEngine: SimulationDemoEngine
 
+    @State private var presentedFeatureDemoAnalytics: FeatureDemoKind?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Spacing.xxl) {
@@ -38,6 +40,12 @@ struct SimulationControlPanelView: View {
         }
         .background(DS.Colors.background)
         .frame(minWidth: 860, minHeight: 600)
+        .sheet(item: $presentedFeatureDemoAnalytics) { featureDemoKind in
+            SimulationControlPanelFeatureDemoAnalyticsSheet(
+                featureDemoKind: featureDemoKind,
+                simulationDemoEngine: simulationDemoEngine
+            )
+        }
     }
 
     // MARK: - Header
@@ -48,10 +56,6 @@ struct SimulationControlPanelView: View {
                 Text("Clicky Memory Demo")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(DS.Colors.textPrimary)
-
-                Text("Presenter-only cockpit · all data and metrics are simulated")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.Colors.textTertiary)
             }
 
             Spacer()
@@ -141,21 +145,12 @@ struct SimulationControlPanelView: View {
 
             Spacer(minLength: DS.Spacing.lg)
 
-            HStack {
-                SimulationControlPanelRunButton(
-                    action: {
-                        // Surface the comparison window first, then start the
-                        // run so the audience sees the conversation from its
-                        // opening beat.
-                        NotificationCenter.default.post(
-                            name: .clickyOpenSimulationDemoComparisonWindow,
-                            object: nil
-                        )
-                        simulationDemoEngine.runSkillsDemo()
-                    }
+            featureDemoCardActionRow(featureDemoKind: .skills) {
+                NotificationCenter.default.post(
+                    name: .clickyOpenSimulationDemoComparisonWindow,
+                    object: nil
                 )
-
-                Spacer()
+                simulationDemoEngine.runSkillsDemo()
             }
         }
         .padding(DS.Spacing.lg)
@@ -194,21 +189,12 @@ struct SimulationControlPanelView: View {
 
             Spacer(minLength: DS.Spacing.lg)
 
-            HStack {
-                SimulationControlPanelRunButton(
-                    action: {
-                        // Surface the comparison window first, then start the
-                        // run so the audience sees the conversation from its
-                        // opening beat.
-                        NotificationCenter.default.post(
-                            name: .clickyOpenSimulationDemoComparisonWindow,
-                            object: nil
-                        )
-                        simulationDemoEngine.runPreferencesDemo()
-                    }
+            featureDemoCardActionRow(featureDemoKind: .preferences) {
+                NotificationCenter.default.post(
+                    name: .clickyOpenSimulationDemoComparisonWindow,
+                    object: nil
                 )
-
-                Spacer()
+                simulationDemoEngine.runPreferencesDemo()
             }
         }
         .padding(DS.Spacing.lg)
@@ -247,21 +233,12 @@ struct SimulationControlPanelView: View {
 
             Spacer(minLength: DS.Spacing.lg)
 
-            HStack {
-                SimulationControlPanelRunButton(
-                    action: {
-                        // Surface the comparison window first, then start the
-                        // run so the audience sees the conversation from its
-                        // opening beat.
-                        NotificationCenter.default.post(
-                            name: .clickyOpenSimulationDemoComparisonWindow,
-                            object: nil
-                        )
-                        simulationDemoEngine.runRoutinesDemo()
-                    }
+            featureDemoCardActionRow(featureDemoKind: .routines) {
+                NotificationCenter.default.post(
+                    name: .clickyOpenSimulationDemoComparisonWindow,
+                    object: nil
                 )
-
-                Spacer()
+                simulationDemoEngine.runRoutinesDemo()
             }
         }
         .padding(DS.Spacing.lg)
@@ -300,21 +277,12 @@ struct SimulationControlPanelView: View {
 
             Spacer(minLength: DS.Spacing.lg)
 
-            HStack {
-                SimulationControlPanelRunButton(
-                    action: {
-                        // Surface the comparison window first, then start the
-                        // run so the audience sees the conversation from its
-                        // opening beat.
-                        NotificationCenter.default.post(
-                            name: .clickyOpenSimulationDemoComparisonWindow,
-                            object: nil
-                        )
-                        simulationDemoEngine.runNicheSuggestionsDemo()
-                    }
+            featureDemoCardActionRow(featureDemoKind: .nicheSuggestions) {
+                NotificationCenter.default.post(
+                    name: .clickyOpenSimulationDemoComparisonWindow,
+                    object: nil
                 )
-
-                Spacer()
+                simulationDemoEngine.runNicheSuggestionsDemo()
             }
         }
         .padding(DS.Spacing.lg)
@@ -408,11 +376,125 @@ struct SimulationControlPanelView: View {
 
     // MARK: - Shared Helpers
 
+    private func featureDemoCardActionRow(
+        featureDemoKind: FeatureDemoKind,
+        runAction: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: DS.Spacing.sm) {
+            SimulationControlPanelRunButton(action: runAction)
+
+            SimulationControlPanelChipButton(
+                title: "Analytics",
+                iconSystemName: "chart.bar.fill",
+                iconColor: DS.Colors.accentText,
+                action: {
+                    presentedFeatureDemoAnalytics = featureDemoKind
+                }
+            )
+
+            Spacer()
+        }
+    }
+
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 10, weight: .semibold))
             .tracking(0.8)
             .foregroundColor(DS.Colors.textTertiary)
+    }
+}
+
+// MARK: - Feature Demo Analytics
+
+private struct SimulationControlPanelFeatureDemoAnalyticsSheet: View {
+    let featureDemoKind: FeatureDemoKind
+    @ObservedObject var simulationDemoEngine: SimulationDemoEngine
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.lg) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(featureDemoKind.analyticsSheetTitle)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+
+                    Text(simulationDemoEngine.featureDemoRunStatusDescription(for: featureDemoKind))
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+
+                Spacer()
+
+                SimulationControlPanelChipButton(
+                    title: "Close",
+                    action: { dismiss() }
+                )
+            }
+
+            VStack(alignment: .leading, spacing: DS.Spacing.md) {
+                Text("THE BENEFIT")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                Text(featureDemoKind.featureBenefitSummary)
+                    .font(.system(size: 13))
+                    .lineSpacing(4)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DS.Spacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .simulationCardSurface()
+
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                Text("PROOF METRICS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundColor(DS.Colors.textTertiary)
+
+                VStack(spacing: 0) {
+                    ForEach(
+                        Array(simulationDemoEngine.analyticsMetrics(for: featureDemoKind).enumerated()),
+                        id: \.element.id
+                    ) { index, analyticsMetric in
+                        if index > 0 {
+                            Rectangle()
+                                .fill(DS.Colors.borderSubtle.opacity(0.6))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, DS.Spacing.lg)
+                        }
+
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(analyticsMetric.label)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DS.Colors.textSecondary)
+
+                            Spacer(minLength: DS.Spacing.md)
+
+                            Text(analyticsMetric.value)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(DS.Colors.textPrimary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        .padding(.horizontal, DS.Spacing.lg)
+                        .padding(.vertical, DS.Spacing.md)
+                    }
+                }
+                .simulationCardSurface()
+            }
+
+            Text("Scripted demo metrics for this feature run.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+
+            Spacer(minLength: 0)
+        }
+        .padding(DS.Spacing.xxl)
+        .frame(minWidth: 420, minHeight: 320, alignment: .topLeading)
+        .background(DS.Colors.background)
     }
 }
 

@@ -94,8 +94,8 @@ enum TeachingPromptBuilder {
     }
 
     /// Returns only the memory-injection suffix appended after `basePrompt`.
-    /// Used by the presenter demo's X-Ray Prompt Peek to show the exact text
-    /// Claude receives beyond the generic companion instructions.
+    /// Useful in tests and debug tooling to inspect what Claude receives beyond
+    /// the generic companion instructions.
     static func memoryInjectionExcerpt(basePrompt: String, builtPrompt: String) -> String? {
         let trimmedBasePrompt = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBuiltPrompt = builtPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
