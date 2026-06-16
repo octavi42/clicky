@@ -1598,13 +1598,8 @@ struct CompanionPanelView: View {
                 Image(systemName: "macwindow")
                     .font(.system(size: 12, weight: .medium))
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Open Memory Demo")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Presenter-only simulation control panel")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                }
+                Text("Open Memory Demo")
+                    .font(.system(size: 12, weight: .semibold))
             }
             .foregroundColor(DS.Colors.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)

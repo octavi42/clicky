@@ -30,51 +30,164 @@ enum FeatureDemoRunState: Equatable {
 
 /// Which feature demo a run belongs to. The comparison window uses this to
 /// pick its lane headers and to restart the right script on Replay.
-enum FeatureDemoKind: Equatable {
+enum FeatureDemoKind: String, Equatable, Identifiable {
     case skills
     case preferences
     case routines
     case nicheSuggestions
-}
 
-/// The four-stage memory loop used to tag X-Ray peek panels in the
-/// comparison conversation.
-enum DemoMemoryPipelineStage: Int, CaseIterable, Hashable, Identifiable {
-    case persistedSession = 1
-    case coldPathGate = 2
-    case distillation = 3
-    case injection = 4
+    var id: String { rawValue }
 
-    var id: Int { rawValue }
-
-    var displayTitle: String {
+    var analyticsSheetTitle: String {
         switch self {
-        case .persistedSession: return "Session"
-        case .coldPathGate: return "Gate"
-        case .distillation: return "Distill"
-        case .injection: return "Inject"
+        case .skills: return "Why Skills?"
+        case .preferences: return "Why Preferences?"
+        case .routines: return "Why Routines?"
+        case .nicheSuggestions: return "Why Niche Suggestions?"
+        }
+    }
+
+    var featureBenefitSummary: String {
+        switch self {
+        case .skills:
+            return "Clicky learns house rules you teach once—conventions no stateless assistant could guess—and reuses them from a one-word ask. This replaces generic AI behavior with your team's specific workflow."
+        case .preferences:
+            return "Clicky learns how you want answers—including things to stop doing—and applies that style on every subsequent turn. It eliminates the need to repeatedly prompt for tone or format."
+        case .routines:
+            return "Clicky notices repeated app transitions and surfaces proactive shortcuts. It understands your workflow beats so it can anticipate what you need before you even ask for it."
+        case .nicheSuggestions:
+            return "Before Clicky knows your specific habits, it helps you discover value with app-aware prompts matched to your niche. It bridges the 'blank page' problem for new users."
+        }
+    }
+
+    /// Scripted proof metrics shown in each feature card's analytics sheet.
+    /// These are fixed demo outcomes so presenters always see the story the
+    /// run is designed to tell, even before pressing Run.
+    var previewAnalyticsMetrics: [FeatureDemoAnalyticsMetric] {
+        switch self {
+        case .skills:
+            return [
+                FeatureDemoAnalyticsMetric(
+                    id: "saved-skill",
+                    label: "Skill saved",
+                    value: "Ship changes the team's way"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "skill-matched",
+                    label: "Skill matched on re-ask",
+                    value: "Yes (top match)"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "prompt-included",
+                    label: "Teaching skills in prompt",
+                    value: "Yes"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "turns-to-success",
+                    label: "Turns to success",
+                    value: "4 → 1"
+                ),
+            ]
+        case .preferences:
+            return [
+                FeatureDemoAnalyticsMetric(
+                    id: "signal-detected",
+                    label: "Preference signal detected",
+                    value: "Yes"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "saved-preference",
+                    label: "Preference saved",
+                    value: "Don't read code aloud — line numbers only"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "prompt-included",
+                    label: "Preference in prompt",
+                    value: "Yes"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "answer-length",
+                    label: "Answer length",
+                    value: "71 → 16 words"
+                ),
+            ]
+        case .routines:
+            return [
+                FeatureDemoAnalyticsMetric(
+                    id: "edges-seeded",
+                    label: "Transition edges seeded",
+                    value: "9 over 3 days → 10 over 4 days"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "chip-shown",
+                    label: "Routine chip shown",
+                    value: "Yes"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "chip-label",
+                    label: "Chip label",
+                    value: "You often open Xcode after Linear"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "answer-style",
+                    label: "Answer style",
+                    value: "generic → routine-aware"
+                ),
+            ]
+        case .nicheSuggestions:
+            return [
+                FeatureDemoAnalyticsMetric(
+                    id: "niche-picked",
+                    label: "Niche picked",
+                    value: "Developer"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "simulated-app",
+                    label: "Simulated frontmost app",
+                    value: "Xcode"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "suggestion-mode",
+                    label: "Suggestion mode",
+                    value: "app-aware (user-picked niche)"
+                ),
+                FeatureDemoAnalyticsMetric(
+                    id: "suggestions-shown",
+                    label: "Suggestions shown",
+                    value: "4 (bundled mapping)"
+                ),
+            ]
         }
     }
 }
 
+/// One labeled proof metric shown in a feature demo's analytics sheet.
+struct FeatureDemoAnalyticsMetric: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let value: String
+}
+
 /// One conversation beat rendered in the comparison window. A demo run is a
 /// paced sequence of these; the view renders each kind differently (user
-/// bubble, Clicky bubble, system pill).
+/// bubble, Clicky bubble, insight pill).
 ///
 /// The same beats are designed to be replayable onto the real cursor overlay
 /// later ("theater mode") — only the renderer changes, never the script.
 enum DemoConversationBeat: Equatable {
     /// Right-aligned user bubble, as if spoken via push-to-talk.
     case userSays(text: String)
-    /// Left-aligned Clicky bubble. `matchedSkillBadge` renders a small
-    /// "Matched: <skill name>" tag under the bubble when a saved skill
-    /// informed this response.
-    case clickyResponds(text: String, matchedSkillBadge: String?, ghostPoint: CGPoint? = nil)
-    /// Centered pill marking a real engine event (skill saved, no match…).
-    case systemEvent(iconSystemName: String, label: String, detail: String?)
-    /// Monospace X-Ray panel for one stage of the memory pipeline (session
-    /// JSON summary, gate decision, receipt, or prompt injection excerpt).
-    case xRayPeek(pipelineStage: DemoMemoryPipelineStage, sectionLabel: String, bodyText: String)
+    /// Left-aligned Clicky bubble. Optional ghost point triggers the live
+    /// cursor overlay to point at a scripted screen location.
+    case clickyResponds(text: String, ghostPoint: CGPoint? = nil)
+    /// Centered insight pill for a real engine step (capture, gate, distill,
+    /// inject…). Tap to fade in a short detail line and/or monospace body.
+    case demoInsight(
+        iconSystemName: String,
+        label: String,
+        detail: String? = nil,
+        insightBody: String? = nil
+    )
 
     /// Whether the comparison column should show the typing indicator before
     /// this beat lands (only Clicky's bubbles "think" first).
@@ -222,6 +335,30 @@ final class SimulationDemoEngine: ObservableObject {
         case .nicheSuggestions: return nicheSuggestionsDemoRunState
         case nil: return .notRun
         }
+    }
+
+    func featureDemoRunStatusDescription(for featureDemoKind: FeatureDemoKind) -> String {
+        switch featureDemoRunState(for: featureDemoKind) {
+        case .notRun:
+            return "Not run yet"
+        case .running:
+            return "Running…"
+        case .finished(let finishedAtDescription):
+            return "Complete · \(finishedAtDescription)"
+        }
+    }
+
+    func featureDemoRunState(for featureDemoKind: FeatureDemoKind) -> FeatureDemoRunState {
+        switch featureDemoKind {
+        case .skills: return skillsDemoRunState
+        case .preferences: return preferencesDemoRunState
+        case .routines: return routinesDemoRunState
+        case .nicheSuggestions: return nicheSuggestionsDemoRunState
+        }
+    }
+
+    func analyticsMetrics(for featureDemoKind: FeatureDemoKind) -> [FeatureDemoAnalyticsMetric] {
+        featureDemoKind.previewAnalyticsMetrics
     }
 
     private let teachingSkillStore: TeachingSkillStore
@@ -424,7 +561,7 @@ final class SimulationDemoEngine: ObservableObject {
                 let commitSkillIsAlreadyKnown = matchesBeforeSave.contains { match in
                     match.skill.id == SkillsDemoScript.commitSkillId
                 }
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "magnifyingglass",
                     label: commitSkillIsAlreadyKnown
                         ? "Unexpected: a commit skill was already in memory"
@@ -433,19 +570,19 @@ final class SimulationDemoEngine: ObservableObject {
                 )
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(text: SkillsDemoScript.firstGuidanceResponse, matchedSkillBadge: nil)
+                .clickyResponds(text: SkillsDemoScript.firstGuidanceResponse)
             },
             DemoScriptStep(lane: .firstSession) {
                 .userSays(text: SkillsDemoScript.followUpQuestionTranscript)
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(text: SkillsDemoScript.followUpGuidanceResponse, matchedSkillBadge: nil)
+                .clickyResponds(text: SkillsDemoScript.followUpGuidanceResponse)
             },
             DemoScriptStep(lane: .firstSession) {
                 .userSays(text: SkillsDemoScript.confirmationTranscript)
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(text: SkillsDemoScript.confirmationAcknowledgement, matchedSkillBadge: nil)
+                .clickyResponds(text: SkillsDemoScript.confirmationAcknowledgement)
             },
 
             // Stage 1 — Persisted session: real SessionStore write from the
@@ -461,25 +598,18 @@ final class SimulationDemoEngine: ObservableObject {
                     print("⚠️ Skills demo failed to persist the teaching session: \(error)")
                 }
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "tray.and.arrow.down.fill",
                     label: "Session captured · \(teachingSessionTurns.count) turns",
-                    detail: "PersistedSession written to SessionStore (7-day retention in production)"
-                )
-            },
-            DemoScriptStep(lane: .firstSession) {
-                guard let persistedTeachingSession = runContext.persistedTeachingSession else { return nil }
-                return .xRayPeek(
-                    pipelineStage: .persistedSession,
-                    sectionLabel: "persisted session",
-                    bodyText: SimulationDemoPipelineFormatter.persistedSessionExcerpt(persistedTeachingSession)
+                    detail: "PersistedSession written to SessionStore (7-day retention in production)",
+                    insightBody: SimulationDemoPipelineFormatter.persistedSessionExcerpt(persistedTeachingSession)
                 )
             },
 
             // Stage 2 — Cold-path gate: real MemoryGate rules, no LLM.
             DemoScriptStep(lane: .firstSession) { [self] in
                 guard let persistedTeachingSession = runContext.persistedTeachingSession else {
-                    return .systemEvent(
+                    return .demoInsight(
                         iconSystemName: "xmark.octagon",
                         label: "Unexpected: no session to evaluate",
                         detail: nil
@@ -494,25 +624,13 @@ final class SimulationDemoEngine: ObservableObject {
                 runContext.skillGateReasons = gateDecision.passedCategories[.skill] ?? []
                 let skillGatePassed = gateDecision.passes(.skill)
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: skillGatePassed ? "shield.checkered" : "xmark.octagon",
                     label: skillGatePassed
                         ? "Gate passed · skill distillation"
                         : "Unexpected: gate blocked skill distillation",
-                    detail: "MemoryGate.evaluate ran for real"
-                )
-            },
-            DemoScriptStep(lane: .firstSession) {
-                guard let persistedTeachingSession = runContext.persistedTeachingSession else { return nil }
-                let gateDecision = MemoryGate.evaluate(
-                    session: persistedTeachingSession,
-                    topicHistory: [],
-                    isLearningEnabled: true
-                )
-                return .xRayPeek(
-                    pipelineStage: .coldPathGate,
-                    sectionLabel: "cold-path gate",
-                    bodyText: SimulationDemoPipelineFormatter.gateDecisionExcerpt(gateDecision)
+                    detail: "MemoryGate.evaluate ran for real",
+                    insightBody: SimulationDemoPipelineFormatter.gateDecisionExcerpt(gateDecision)
                 )
             },
 
@@ -547,26 +665,14 @@ final class SimulationDemoEngine: ObservableObject {
                 skillsDemoSavedSkillNameProof = freshlyLearnedCommitSkill.name
                 lastMemoryWrittenDescription = "Skill · \(freshlyLearnedCommitSkill.name) · \(lastRunTimeFormatter.string(from: Date()))"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "brain",
                     label: "Distilled · \(freshlyLearnedCommitSkill.name)",
-                    detail: "TeachingSkillStore + MemoryReceipt.capture (synthesizer skipped in demo)"
-                )
-            },
-            DemoScriptStep(lane: .firstSession) { [self] in
-                guard let persistedTeachingSession = runContext.persistedTeachingSession,
-                      let savedSkill = teachingSkillStore.skill(withID: SkillsDemoScript.commitSkillId),
-                      let latestReceipt = savedSkill.receipts.last else {
-                    return nil
-                }
-
-                return .xRayPeek(
-                    pipelineStage: .distillation,
-                    sectionLabel: "distillation + receipt",
-                    bodyText: SimulationDemoPipelineFormatter.distillationReceiptExcerpt(
-                        memoryTitle: savedSkill.name,
-                        memoryStorePath: savedSkill.folderURL.path,
-                        receipt: latestReceipt,
+                    detail: "TeachingSkillStore + MemoryReceipt.capture (synthesizer skipped in demo)",
+                    insightBody: SimulationDemoPipelineFormatter.distillationReceiptExcerpt(
+                        memoryTitle: freshlyLearnedCommitSkill.name,
+                        memoryStorePath: freshlyLearnedCommitSkill.folderURL.path,
+                        receipt: skillReceipt,
                         sessionTurnCount: persistedTeachingSession.turns.count
                     )
                 )
@@ -614,44 +720,30 @@ final class SimulationDemoEngine: ObservableObject {
                     ? "base + teaching skills"
                     : "base only"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "checkmark.seal",
                     label: runContext.savedSkillIsTopMatch
                         ? "Skill matched · injected into the prompt"
                         : "Unexpected: the saved skill did not match",
-                    detail: "SkillMatcher + TeachingPromptBuilder ran for real"
-                )
-            },
-            DemoScriptStep(lane: .secondSession) {
-                guard runContext.savedSkillIsTopMatch,
-                      let memoryInjectionExcerpt = TeachingPromptBuilder.memoryInjectionExcerpt(
-                          basePrompt: SkillsDemoScript.demoBasePrompt,
-                          builtPrompt: runContext.builtVoicePromptWithSkills
-                      ) else {
-                    return nil
-                }
-
-                return .xRayPeek(
-                    pipelineStage: .injection,
-                    sectionLabel: "teaching skills",
-                    bodyText: memoryInjectionExcerpt
+                    detail: "SkillMatcher + TeachingPromptBuilder ran for real",
+                    insightBody: runContext.savedSkillIsTopMatch
+                        ? TeachingPromptBuilder.memoryInjectionExcerpt(
+                            basePrompt: SkillsDemoScript.demoBasePrompt,
+                            builtPrompt: runContext.builtVoicePromptWithSkills
+                        )
+                        : nil
                 )
             },
             DemoScriptStep(lane: .secondSession) {
                 .clickyResponds(
                     text: SkillsDemoScript.reAskResponse,
-                    // Badge reflects the real matcher result from the
-                    // previous step, not a hardcoded claim.
-                    matchedSkillBadge: runContext.savedSkillIsTopMatch
-                        ? "Matched: Ship changes the team's way"
-                        : nil,
                     // Ghost point represents a generic AI pointing at the app's general location
                     // instead of the specific house-rule location Clicky knows.
                     ghostPoint: CGPoint(x: 400, y: 400)
                 )
             },
             DemoScriptStep(lane: .secondSession) { [self] in
-                skillsDemoTurnsToSuccessProof = "4 → 1 (simulated)"
+                skillsDemoTurnsToSuccessProof = "4 → 1"
                 beforeAfterMetricDescription = "Turns to success: 4 → 1 (simulated demo metric)"
                 // Side-effect-only step: publishes the recap strip spanning
                 // both columns instead of appending a conversation row.
@@ -751,7 +843,7 @@ final class SimulationDemoEngine: ObservableObject {
                 .userSays(text: PreferencesDemoScript.screenHelpQuestionTranscript)
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(text: PreferencesDemoScript.verboseAnswerResponse, matchedSkillBadge: nil)
+                .clickyResponds(text: PreferencesDemoScript.verboseAnswerResponse)
             },
             DemoScriptStep(lane: .firstSession) {
                 .userSays(text: PreferencesDemoScript.statedPreferenceTranscript)
@@ -769,25 +861,18 @@ final class SimulationDemoEngine: ObservableObject {
                     print("⚠️ Preferences demo failed to persist the session: \(error)")
                 }
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "tray.and.arrow.down.fill",
                     label: "Session captured · \(preferenceSessionTurns.count) turns",
-                    detail: "PersistedSession written to SessionStore"
-                )
-            },
-            DemoScriptStep(lane: .firstSession) {
-                guard let persistedPreferenceSession = runContext.persistedPreferenceSession else { return nil }
-                return .xRayPeek(
-                    pipelineStage: .persistedSession,
-                    sectionLabel: "persisted session",
-                    bodyText: SimulationDemoPipelineFormatter.persistedSessionExcerpt(persistedPreferenceSession)
+                    detail: "PersistedSession written to SessionStore",
+                    insightBody: SimulationDemoPipelineFormatter.persistedSessionExcerpt(persistedPreferenceSession)
                 )
             },
 
             // Stage 2 — Cold-path gate (PreferenceSignalDetector + MemoryGate)
             DemoScriptStep(lane: .firstSession) { [self] in
                 guard let persistedPreferenceSession = runContext.persistedPreferenceSession else {
-                    return .systemEvent(
+                    return .demoInsight(
                         iconSystemName: "xmark.octagon",
                         label: "Unexpected: no session to evaluate",
                         detail: nil
@@ -810,25 +895,13 @@ final class SimulationDemoEngine: ObservableObject {
                 preferencesDemoSignalDetectedProof =
                     statementRegisteredAsPreferenceSignal && preferenceGatePassed ? "Yes" : "No (unexpected)"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: preferenceGatePassed ? "shield.checkered" : "xmark.octagon",
                     label: preferenceGatePassed
                         ? "Gate passed · preference distillation"
                         : "Unexpected: gate blocked preference distillation",
-                    detail: "PreferenceSignalDetector + MemoryGate.evaluate ran for real"
-                )
-            },
-            DemoScriptStep(lane: .firstSession) {
-                guard let persistedPreferenceSession = runContext.persistedPreferenceSession else { return nil }
-                let gateDecision = MemoryGate.evaluate(
-                    session: persistedPreferenceSession,
-                    topicHistory: [],
-                    isLearningEnabled: true
-                )
-                return .xRayPeek(
-                    pipelineStage: .coldPathGate,
-                    sectionLabel: "cold-path gate",
-                    bodyText: SimulationDemoPipelineFormatter.gateDecisionExcerpt(gateDecision)
+                    detail: "PreferenceSignalDetector + MemoryGate.evaluate ran for real",
+                    insightBody: SimulationDemoPipelineFormatter.gateDecisionExcerpt(gateDecision)
                 )
             },
 
@@ -862,32 +935,20 @@ final class SimulationDemoEngine: ObservableObject {
                 preferencesDemoSavedPreferenceTitleProof = freshlySavedPreference.title
                 lastMemoryWrittenDescription = "Preference · \(freshlySavedPreference.title) · \(lastRunTimeFormatter.string(from: Date()))"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "brain",
                     label: "Distilled · \(freshlySavedPreference.title)",
-                    detail: "AuxiliaryMemoryStore + MemoryReceipt.capture (synthesizer skipped in demo)"
-                )
-            },
-            DemoScriptStep(lane: .firstSession) { [self] in
-                guard let persistedPreferenceSession = runContext.persistedPreferenceSession,
-                      let savedPreference = auxiliaryMemoryStore.memory(withID: PreferencesDemoScript.shortAnswersPreferenceId),
-                      let latestReceipt = savedPreference.receipts.last else {
-                    return nil
-                }
-
-                return .xRayPeek(
-                    pipelineStage: .distillation,
-                    sectionLabel: "distillation + receipt",
-                    bodyText: SimulationDemoPipelineFormatter.distillationReceiptExcerpt(
-                        memoryTitle: savedPreference.title,
+                    detail: "AuxiliaryMemoryStore + MemoryReceipt.capture (synthesizer skipped in demo)",
+                    insightBody: SimulationDemoPipelineFormatter.distillationReceiptExcerpt(
+                        memoryTitle: freshlySavedPreference.title,
                         memoryStorePath: ClickyPaths.home.appendingPathComponent("auxiliary-memories.json").path,
-                        receipt: latestReceipt,
+                        receipt: preferenceReceipt,
                         sessionTurnCount: persistedPreferenceSession.turns.count
                     )
                 )
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(text: PreferencesDemoScript.preferenceAcknowledgement, matchedSkillBadge: nil)
+                .clickyResponds(text: PreferencesDemoScript.preferenceAcknowledgement)
             },
 
             // After: the exact same question, now answered through the
@@ -936,37 +997,23 @@ final class SimulationDemoEngine: ObservableObject {
                     ? "base + user preferences"
                     : "base only"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "checkmark.seal",
                     label: runContext.savedPreferenceWasInjectedIntoPrompt
                         ? "Preference injected into the prompt"
                         : "Unexpected: the saved preference was not injected",
-                    detail: "TeachingPromptBuilder ran for real"
-                )
-            },
-            DemoScriptStep(lane: .secondSession) {
-                guard runContext.savedPreferenceWasInjectedIntoPrompt,
-                      let memoryInjectionExcerpt = TeachingPromptBuilder.memoryInjectionExcerpt(
-                          basePrompt: PreferencesDemoScript.demoBasePrompt,
-                          builtPrompt: runContext.builtVoicePromptWithPreferences
-                      ) else {
-                    return nil
-                }
-
-                return .xRayPeek(
-                    pipelineStage: .injection,
-                    sectionLabel: "user preferences",
-                    bodyText: memoryInjectionExcerpt
+                    detail: "TeachingPromptBuilder ran for real",
+                    insightBody: runContext.savedPreferenceWasInjectedIntoPrompt
+                        ? TeachingPromptBuilder.memoryInjectionExcerpt(
+                            basePrompt: PreferencesDemoScript.demoBasePrompt,
+                            builtPrompt: runContext.builtVoicePromptWithPreferences
+                        )
+                        : nil
                 )
             },
             DemoScriptStep(lane: .secondSession) {
                 .clickyResponds(
                     text: PreferencesDemoScript.shortAnswerResponse,
-                    // Badge reflects the real prompt-build result from the
-                    // previous step, not a hardcoded claim.
-                    matchedSkillBadge: runContext.savedPreferenceWasInjectedIntoPrompt
-                        ? "Preference applied: short + shortcuts"
-                        : nil,
                     // Ghost point represents a generic AI pointing at the code editor
                     // to read the code aloud, which the user explicitly asked to STOP.
                     ghostPoint: CGPoint(x: 600, y: 300)
@@ -983,7 +1030,7 @@ final class SimulationDemoEngine: ObservableObject {
                 )
 
                 preferencesDemoAnswerLengthProof =
-                    "\(verboseAnswerWordCount) → \(shortAnswerWordCount) words (simulated)"
+                    "\(verboseAnswerWordCount) → \(shortAnswerWordCount) words"
                 beforeAfterMetricDescription =
                     "Answer length: \(verboseAnswerWordCount) → \(shortAnswerWordCount) words (simulated demo metric)"
                 comparisonRecapText =
@@ -1078,7 +1125,7 @@ final class SimulationDemoEngine: ObservableObject {
                 )
                 routinesDemoEdgesSeededProof = RoutinesDemoScript.edgesSeededProofDescription(afterSeededDayCount: 1)
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "arrow.triangle.2.circlepath",
                     label: RoutinesDemoScript.daySeedPillLabel(dayDescription: "3 days ago"),
                     detail: "Real transitions recorded in the activity store"
@@ -1089,7 +1136,7 @@ final class SimulationDemoEngine: ObservableObject {
                 // recurrence is below the chip's bar (minimum 2 distinct
                 // days), so Clicky stays quiet instead of guessing.
                 let chipAfterOneDay = detectLinearToXcodeRoutineChip()
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "magnifyingglass",
                     label: chipAfterOneDay == nil
                         ? "No routine chip yet — only 1 distinct day"
@@ -1101,7 +1148,7 @@ final class SimulationDemoEngine: ObservableObject {
                 .userSays(text: RoutinesDemoScript.askTranscript)
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(text: RoutinesDemoScript.genericAnswerResponse, matchedSkillBadge: nil)
+                .clickyResponds(text: RoutinesDemoScript.genericAnswerResponse)
             },
             DemoScriptStep(lane: .firstSession) { [self] in
                 recordDemoAppTransitions(
@@ -1112,7 +1159,7 @@ final class SimulationDemoEngine: ObservableObject {
                 )
                 routinesDemoEdgesSeededProof = RoutinesDemoScript.edgesSeededProofDescription(afterSeededDayCount: 2)
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "arrow.triangle.2.circlepath",
                     label: RoutinesDemoScript.daySeedPillLabel(dayDescription: "2 days ago"),
                     detail: nil
@@ -1130,7 +1177,7 @@ final class SimulationDemoEngine: ObservableObject {
                 )
                 lastMemoryWrittenDescription = "Activity edges · Linear → Xcode ×\(RoutinesDemoScript.transitionsSeededPerDay * RoutinesDemoScript.seededDistinctDayCount) over \(RoutinesDemoScript.seededDistinctDayCount) days · \(lastRunTimeFormatter.string(from: Date()))"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "arrow.triangle.2.circlepath",
                     label: RoutinesDemoScript.daySeedPillLabel(dayDescription: "Yesterday"),
                     detail: nil
@@ -1148,7 +1195,7 @@ final class SimulationDemoEngine: ObservableObject {
                 )
                 simulatedAppContextDisplayName = RoutinesDemoScript.xcodeDisplayName
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "macwindow",
                     label: "Today · user opens Xcode after Linear",
                     detail: "One more real transition, recorded just now"
@@ -1169,7 +1216,7 @@ final class SimulationDemoEngine: ObservableObject {
                     "Routine chip · \(detectedRoutineChip.label)"
                 } ?? "No match"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "checkmark.seal",
                     label: runContext.detectedRoutineChip.map { detectedRoutineChip in
                         "Routine chip shown · \u{201C}\(detectedRoutineChip.label)\u{201D}"
@@ -1181,21 +1228,14 @@ final class SimulationDemoEngine: ObservableObject {
                 .userSays(text: RoutinesDemoScript.askTranscript)
             },
             DemoScriptStep(lane: .secondSession) {
-                .clickyResponds(
-                    text: RoutinesDemoScript.routineAwareAnswerResponse,
-                    // Badge reflects the real detector result from the
-                    // previous step, not a hardcoded claim.
-                    matchedSkillBadge: runContext.detectedRoutineChip != nil
-                        ? "Routine: Linear → Xcode"
-                        : nil
-                )
+                .clickyResponds(text: RoutinesDemoScript.routineAwareAnswerResponse)
             },
             DemoScriptStep(lane: .secondSession) { [self] in
                 // The chip count metric is real (the detector either produced
                 // the chip or it didn't); the answer-style contrast is
                 // scripted conversation copy, so it stays labeled simulated.
                 let routineChipWasDetected = runContext.detectedRoutineChip != nil
-                routinesDemoAnswerStyleProof = "generic → routine-aware (simulated)"
+                routinesDemoAnswerStyleProof = "generic → routine-aware"
                 beforeAfterMetricDescription = routineChipWasDetected
                     ? "Routine chips: 0 → 1 (real recurrence rules)"
                     : "Routine chips: 0 → 0 (unexpected)"
@@ -1293,7 +1333,7 @@ final class SimulationDemoEngine: ObservableObject {
                 companionManager?.clearUserNicheOverride()
                 nicheSuggestionsDemoNichePickedProof = "None yet"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "person.crop.circle.badge.questionmark",
                     label: "Fresh user · no niche picked",
                     detail: "Real niche override cleared — the companion panel picker updates live"
@@ -1303,10 +1343,7 @@ final class SimulationDemoEngine: ObservableObject {
                 .userSays(text: NicheSuggestionsDemoScript.coldOpenAskTranscript)
             },
             DemoScriptStep(lane: .firstSession) {
-                .clickyResponds(
-                    text: NicheSuggestionsDemoScript.genericCapabilitiesResponse,
-                    matchedSkillBadge: nil
-                )
+                .clickyResponds(text: NicheSuggestionsDemoScript.genericCapabilitiesResponse)
             },
 
             // Developer + Xcode: the niche override is really saved, the
@@ -1317,7 +1354,7 @@ final class SimulationDemoEngine: ObservableObject {
                 companionManager?.setUserNiche(.developer)
                 nicheSuggestionsDemoNichePickedProof = "Developer"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "person.crop.circle.badge.checkmark",
                     label: "Niche picked · Developer",
                     detail: "Real niche override saved — the companion panel picker updates live"
@@ -1327,7 +1364,7 @@ final class SimulationDemoEngine: ObservableObject {
                 simulatedAppContextDisplayName = NicheSuggestionsDemoScript.xcodeDisplayName
                 nicheSuggestionsDemoSimulatedFrontmostAppProof = NicheSuggestionsDemoScript.xcodeDisplayName
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "macwindow",
                     label: "User is in Xcode",
                     detail: "Simulated frontmost app fed to the suggestion engine"
@@ -1357,7 +1394,7 @@ final class SimulationDemoEngine: ObservableObject {
                     ? "Niche mapping · Xcode · \(shownSuggestionCount) app-aware suggestions"
                     : "No match"
 
-                return .systemEvent(
+                return .demoInsight(
                     iconSystemName: "lightbulb",
                     label: snapshotIsAppAware
                         ? "\(shownSuggestionCount) app-aware suggestions found for Xcode"
@@ -1373,10 +1410,7 @@ final class SimulationDemoEngine: ObservableObject {
                 .clickyResponds(
                     text: NicheSuggestionsDemoScript.suggestionsBubbleText(
                         from: runContext.appAwareSnapshot
-                    ),
-                    matchedSkillBadge: runContext.appAwareSnapshot?.suggestions.isEmpty == false
-                        ? "App-aware: Xcode"
-                        : nil
+                    )
                 )
             },
             DemoScriptStep(lane: .secondSession) {
@@ -1388,10 +1422,7 @@ final class SimulationDemoEngine: ObservableObject {
                 )
             },
             DemoScriptStep(lane: .secondSession) {
-                .clickyResponds(
-                    text: NicheSuggestionsDemoScript.pickedSuggestionAnswerResponse,
-                    matchedSkillBadge: nil
-                )
+                .clickyResponds(text: NicheSuggestionsDemoScript.pickedSuggestionAnswerResponse)
             },
             DemoScriptStep(lane: .secondSession) { [self] in
                 let shownSuggestionCount = runContext.appAwareSnapshot?.suggestions.count ?? 0
@@ -1635,7 +1666,7 @@ final class SimulationDemoEngine: ObservableObject {
             }
 
             // If the beat includes a ghost point, trigger it on the companion manager
-            if case .clickyResponds(_, _, let ghostPoint) = beat {
+            if case .clickyResponds(_, let ghostPoint) = beat {
                 if let ghostPoint = ghostPoint {
                     companionManager?.ghostElementScreenLocation = ghostPoint
                     await pause(nanoseconds: 600_000_000)
@@ -2217,7 +2248,7 @@ private enum AskClickyScript {
     }
 }
 
-/// Formats production memory-pipeline facts into monospace X-Ray peek copy.
+/// Formats production memory-pipeline facts into monospace insight copy.
 private enum SimulationDemoPipelineFormatter {
     static func persistedSessionExcerpt(_ session: PersistedSession) -> String {
         let lastUserTranscript = session.turns.last?.userTranscript ?? "—"
